@@ -1,0 +1,11 @@
+customtkinter
+pyodbc
+python-dotenv
+psycopg2-binary
+# Recording dependencies
+opencv-python
+mss
+numpy
+# Windows-specific dependencies for window detection
+pywin32
+psutil
