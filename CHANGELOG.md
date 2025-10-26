@@ -1,119 +1,119 @@
 # Changelog
 
-All notable changes to the WATS project will be documented in this file.
+Todas as mudanças notáveis do projeto WATS serão documentadas neste arquivo.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+O formato é baseado em [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+e este projeto adere ao [Versionamento Semântico](https://semver.org/spec/v2.0.0.html).
 
 ## [4.2.0] - 2025-10-26
 
-### Added
+### Adicionado
 
-- **Session Recording System**
+- **Sistema de Gravação de Sessões**
 
-  - Multiple recording modes: full screen, RDP window-specific, active window
-  - Lightweight screen capture using MSS with minimal CPU/memory usage
-  - H.264 video compression for efficient storage
-  - Automatic file rotation based on size and time limits
-  - Storage quota management with automatic cleanup
-  - Age-based deletion of old recordings
-  - Real-time recording status indicators in UI
+  - Múltiplos modos de gravação: tela cheia, específico da janela RDP, janela ativa
+  - Captura de tela leve usando MSS com uso mínimo de CPU/memória
+  - Compressão de vídeo H.264 para armazenamento eficiente
+  - Rotação automática de arquivos baseada em limites de tamanho e tempo
+  - Gerenciamento de cota de armazenamento com limpeza automática
+  - Exclusão baseada em idade de gravações antigas
+  - Indicadores de status de gravação em tempo real na UI
 
-- **Recording Configuration**
+- **Configuração de Gravação**
 
-  - Environment variable configuration via .env file
-  - Configurable frame rate, quality, and resolution settings
-  - Recording mode selection (full_screen, rdp_window, active_window)
-  - Storage management settings (max size, duration, cleanup intervals)
+  - Configuração por variáveis de ambiente via arquivo .env
+  - Configurações de frame rate, qualidade e resolução configuráveis
+  - Seleção de modo de gravação (full_screen, rdp_window, active_window)
+  - Configurações de gerenciamento de armazenamento (tamanho máximo, duração, intervalos de limpeza)
 
-- **Windows Integration**
+- **Integração com Windows**
 
-  - RDP window detection and tracking
-  - Automatic window following for RDP sessions
-  - Process-based window identification
-  - Fallback mechanisms for reliable recording
+  - Detecção e rastreamento de janela RDP
+  - Seguimento automático de janela para sessões RDP
+  - Identificação de janela baseada em processo
+  - Mecanismos de fallback para gravação confiável
 
-- **File Management**
-  - Automatic file rotation based on configurable limits
-  - Background cleanup processes
-  - Metadata tracking for each recording session
-  - Storage statistics and monitoring
+- **Gerenciamento de Arquivos**
+  - Rotação automática de arquivos baseada em limites configuráveis
+  - Processos de limpeza em segundo plano
+  - Rastreamento de metadados para cada sessão de gravação
+  - Estatísticas e monitoramento de armazenamento
 
-### Enhanced
+### Aprimorado
 
-- **Performance Optimizations**
+- **Otimizações de Performance**
 
-  - Deferred initialization for faster startup
-  - Background database initialization
-  - Optimized UI creation process
-  - Reduced memory footprint
+  - Inicialização adiada para startup mais rápido
+  - Inicialização de banco de dados em segundo plano
+  - Processo de criação de UI otimizado
+  - Pegada de memória reduzida
 
-- **Error Handling**
+- **Tratamento de Erros**
 
-  - Comprehensive error handling for recording operations
-  - Graceful fallbacks when recording components fail
-  - Detailed logging for troubleshooting
-  - User-friendly error messages
+  - Tratamento abrangente de erros para operações de gravação
+  - Fallbacks elegantes quando componentes de gravação falham
+  - Log detalhado para resolução de problemas
+  - Mensagens de erro amigáveis ao usuário
 
-- **Configuration Management**
-  - Extended Settings class with recording preferences
-  - Validation for all recording configuration options
-  - Better environment variable handling
-  - Embedded .env file support in executables
+- **Gerenciamento de Configuração**
+  - Classe Settings estendida com preferências de gravação
+  - Validação para todas as opções de configuração de gravação
+  - Melhor tratamento de variáveis de ambiente
+  - Suporte a arquivo .env embarcado em executáveis
 
-### Fixed
+### Corrigido
 
-- Environment variable loading in PyInstaller executables
-- Theme persistence across application restarts
-- Database configuration validation
-- Resource cleanup on application shutdown
+- Carregamento de variáveis de ambiente em executáveis PyInstaller
+- Persistência de tema entre reinicializações da aplicação
+- Validação de configuração de banco de dados
+- Limpeza de recursos ao fechar a aplicação
 
-### Dependencies
+### Dependências
 
-- Added `opencv-python` for video encoding
-- Added `mss` for screen capture
-- Added `numpy` for array processing
-- Added `pywin32` for Windows API integration
-- Added `psutil` for process management
+- Adicionado `opencv-python` para codificação de vídeo
+- Adicionado `mss` para captura de tela
+- Adicionado `numpy` para processamento de arrays
+- Adicionado `pywin32` para integração com API do Windows
+- Adicionado `psutil` para gerenciamento de processos
 
-## [4.1.0] - Previous Release
+## [4.1.0] - Versão Anterior
 
-### Added
+### Adicionado
 
-- Core RDP connection management
-- Database integration (PostgreSQL and SQL Server)
-- User management with admin panel
-- Group-based connection organization
-- CustomTkinter-based modern UI
-- Dark/light theme support
-- Real-time connection monitoring
-- Heartbeat system for connection status
-- PyInstaller executable creation
+- Gerenciamento central de conexões RDP
+- Integração com banco de dados (PostgreSQL e SQL Server)
+- Gerenciamento de usuários com painel administrativo
+- Organização de conexões baseada em grupos
+- UI moderna baseada em CustomTkinter
+- Suporte a temas claro/escuro
+- Monitoramento de conexão em tempo real
+- Sistema de heartbeat para status de conexão
+- Criação de executável com PyInstaller
 
-### Features
+### Funcionalidades
 
-- Centralized RDP connection management
-- Database backend support
-- Admin panel for user/connection management
-- Connection grouping and organization
-- Modern UI with theme support
-- Real-time status monitoring
-- Audit logging
-- Standalone executable creation
+- Gerenciamento centralizado de conexões RDP
+- Suporte a backend de banco de dados
+- Painel administrativo para gerenciamento de usuários/conexões
+- Agrupamento e organização de conexões
+- UI moderna com suporte a temas
+- Monitoramento de status em tempo real
+- Log de auditoria
+- Criação de executável standalone
 
 ---
 
-## Version Numbering
+## Numeração de Versões
 
-- **Major version** (X.0.0): Breaking changes or major feature additions
-- **Minor version** (0.X.0): New features that are backward compatible
-- **Patch version** (0.0.X): Bug fixes and minor improvements
+- **Versão principal** (X.0.0): Mudanças que quebram compatibilidade ou adições de recursos principais
+- **Versão menor** (0.X.0): Novos recursos que são compatíveis com versões anteriores
+- **Versão de correção** (0.0.X): Correções de bugs e melhorias menores
 
-## Categories
+## Categorias
 
-- **Added**: New features
-- **Changed**: Changes in existing functionality
-- **Deprecated**: Soon-to-be removed features
-- **Removed**: Removed features
-- **Fixed**: Bug fixes
-- **Security**: Security improvements
+- **Adicionado**: Novos recursos
+- **Alterado**: Mudanças em funcionalidades existentes
+- **Depreciado**: Recursos que serão removidos em breve
+- **Removido**: Recursos removidos
+- **Corrigido**: Correções de bugs
+- **Segurança**: Melhorias de segurança

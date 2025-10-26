@@ -1,45 +1,45 @@
-# WATS - Windows Terminal Server Connection Manager
+# WATS - Gerenciador de Conexões Windows Terminal Server
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://microsoft.com/windows)
 
-**WATS V4.2** is a comprehensive Windows Terminal Server Connection Manager with advanced session recording capabilities for monitoring and auditing RDP connections.
+**WATS V4.2** é um Gerenciador de Conexões Windows Terminal Server abrangente com recursos avançados de gravação de sessões para monitoramento e auditoria de conexões RDP.
 
-## 🚀 Features
+## 🚀 Recursos
 
-### Core Functionality
+### Funcionalidades Principais
 
-- **RDP Connection Management**: Centralized management of remote desktop connections
-- **Database Integration**: Support for PostgreSQL and SQL Server backends
-- **User Management**: Admin panel for user and connection management
-- **Group Organization**: Organize connections by groups for better management
+- **Gerenciamento de Conexões RDP**: Gestão centralizada de conexões de área de trabalho remota
+- **Integração com Banco de Dados**: Suporte para backends PostgreSQL e SQL Server
+- **Gerenciamento de Usuários**: Painel administrativo para gestão de usuários e conexões
+- **Organização por Grupos**: Organize conexões por grupos para melhor gerenciamento
 
-### Session Recording System _(NEW)_
+### Sistema de Gravação de Sessões _(NOVO)_
 
-- **Multiple Recording Modes**: Full screen, RDP window-specific, or active window recording
-- **Lightweight Performance**: Optimized screen capture with minimal CPU/memory usage
-- **H.264 Compression**: Efficient video compression for reduced file sizes
-- **Automatic File Management**: Size and time-based file rotation with cleanup
-- **Privacy Compliant**: Configurable recording scope for privacy requirements
+- **Múltiplos Modos de Gravação**: Tela cheia, janela RDP específica ou gravação da janela ativa
+- **Performance Leve**: Captura de tela otimizada com uso mínimo de CPU/memória
+- **Compressão H.264**: Compressão de vídeo eficiente para redução do tamanho dos arquivos
+- **Gerenciamento Automático de Arquivos**: Rotação de arquivos baseada em tamanho e tempo com limpeza
+- **Conformidade com Privacidade**: Escopo de gravação configurável para requisitos de privacidade
 
-### Advanced Features
+### Recursos Avançados
 
-- **Modern UI**: CustomTkinter-based interface with dark/light theme support
-- **Real-time Monitoring**: Live connection status and heartbeat monitoring
-- **Audit Trail**: Comprehensive logging and session metadata
-- **Executable Build**: Standalone executable with PyInstaller
+- **Interface Moderna**: Interface baseada em CustomTkinter com suporte a temas escuro/claro
+- **Monitoramento em Tempo Real**: Status de conexão ao vivo e monitoramento de heartbeat
+- **Trilha de Auditoria**: Logging abrangente e metadados de sessão
+- **Compilação de Executável**: Executável standalone com PyInstaller
 
-## 📋 Requirements
+## 📋 Requisitos
 
-### System Requirements
+### Requisitos do Sistema
 
-- **OS**: Windows 10/11
+- **SO**: Windows 10/11
 - **Python**: 3.11+
-- **Memory**: 4GB RAM minimum
-- **Disk**: 2GB free space (more for recordings)
+- **Memória**: 4GB RAM mínimo
+- **Disco**: 2GB de espaço livre (mais para gravações)
 
-### Dependencies
+### Dependências
 
 ```txt
 customtkinter>=5.0.0
@@ -53,62 +53,62 @@ pywin32>=306
 psutil>=5.9.0
 ```
 
-## 🛠️ Installation
+## 🛠️ Instalação
 
-### 1. Clone Repository
+### 1. Clonar Repositório
 
 ```bash
 git clone <repository-url>
 cd wats
 ```
 
-### 2. Create Virtual Environment
+### 2. Criar Ambiente Virtual
 
 ```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-### 3. Install Dependencies
+### 3. Instalar Dependências
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Configure Environment
+### 4. Configurar Ambiente
 
 ```bash
-# Copy sample configuration
+# Copiar configuração de exemplo
 copy .env.recording.sample .env
 
-# Edit .env file with your database and recording settings
+# Editar arquivo .env com configurações do banco de dados e gravação
 notepad .env
 ```
 
-### 5. Run Application
+### 5. Executar Aplicação
 
 ```bash
 python run.py
 ```
 
-## ⚙️ Configuration
+## ⚙️ Configuração
 
-### Database Configuration
+### Configuração do Banco de Dados
 
 ```env
-# Database Settings
-DB_TYPE=postgresql          # or sqlserver
-DB_SERVER=your_server
-DB_DATABASE=your_database
-DB_UID=your_username
-DB_PWD=your_password
-DB_PORT=5432               # or 1433 for SQL Server
+# Configurações do Banco de Dados
+DB_TYPE=postgresql          # ou sqlserver
+DB_SERVER=seu_servidor
+DB_DATABASE=seu_banco_de_dados
+DB_UID=seu_usuario
+DB_PWD=sua_senha
+DB_PORT=5432               # ou 1433 para SQL Server
 ```
 
-### Recording Configuration
+### Configuração de Gravação
 
 ```env
-# Recording Settings
+# Configurações de Gravação
 RECORDING_ENABLED=true
 RECORDING_MODE=rdp_window           # full_screen, rdp_window, active_window
 RECORDING_AUTO_START=true
@@ -118,162 +118,168 @@ RECORDING_MAX_FILE_SIZE_MB=100
 RECORDING_MAX_DURATION_MINUTES=30
 ```
 
-## 📚 Documentation
+## 📚 Documentação
 
-- **[Recording System Documentation](RECORDING_SYSTEM_DOCUMENTATION.md)** - Comprehensive guide for session recording
-- **[Performance Optimization](PERFORMANCE_OPTIMIZATION.md)** - Performance tuning guide
-- **[Theme Configuration](THEME_FIX_README.md)** - UI theme customization
-- **[Build Instructions](BUILD_README.md)** - Creating standalone executables
+- **[Documentação do Sistema de Gravação](RECORDING_SYSTEM_DOCUMENTATION.md)** - Guia abrangente para gravação de sessões
+- **[Otimização de Performance](PERFORMANCE_OPTIMIZATION.md)** - Guia de ajuste de performance
+- **[Configuração de Temas](THEME_FIX_README.md)** - Personalização de temas da interface
+- **[Instruções de Build](BUILD_README.md)** - Criando executáveis standalone
 
-## 🎯 Recording Modes
+## 🎯 Modos de Gravação
 
-### RDP Window Recording _(Recommended)_
+### Gravação de Janela RDP _(Recomendado)_
 
-- Records only the RDP connection window
-- 60-80% smaller file sizes
-- Better privacy and performance
-- Automatic window tracking
+- Grava apenas a janela de conexão RDP
+- Arquivos 60-80% menores
+- Melhor privacidade e performance
+- Rastreamento automático da janela
 
-### Full Screen Recording
+### Gravação de Tela Cheia
 
-- Records entire desktop
-- Complete audit trail
-- Higher file sizes and CPU usage
+- Grava toda a área de trabalho
+- Trilha de auditoria completa
+- Maiores tamanhos de arquivo e uso de CPU
 
-### Active Window Recording
+### Gravação de Janela Ativa
 
-- Records currently focused window
-- Dynamic recording based on user interaction
+- Grava a janela atualmente em foco
+- Gravação dinâmica baseada na interação do usuário
 
-## 🔧 Building Executable
+## 🔧 Compilando Executável
 
 ```bash
-# Build standalone executable
+# Compilar executável standalone
 python -m PyInstaller build_executable.spec --clean
 
-# Executable will be created in dist/WATS_App.exe
+# Executável será criado em dist/WATS_App.exe
 ```
 
-## 📁 Project Structure
+## 📁 Estrutura do Projeto
 
 ```
 wats/
-├── run.py                          # Application entry point
-├── requirements.txt                # Python dependencies
-├── build_executable.spec           # PyInstaller configuration
-├── .env.recording.sample           # Configuration template
-├── wats_app/                       # Main application package
+├── run.py                          # Ponto de entrada da aplicação
+├── requirements.txt                # Dependências Python
+├── build_executable.spec           # Configuração PyInstaller
+├── .env.recording.sample           # Template de configuração
+├── wats_app/                       # Pacote principal da aplicação
 │   ├── __init__.py
-│   ├── main.py                     # Core application logic
-│   ├── app_window.py               # Main UI window
-│   ├── config.py                   # Configuration management
-│   ├── utils.py                    # Utility functions
-│   ├── dialogs.py                  # UI dialogs
-│   ├── admin_panels/               # Admin interface
-│   ├── db/                         # Database layer
-│   │   ├── db_service.py          # Database service
-│   │   ├── database_manager.py    # Connection management
-│   │   └── repositories/          # Data access layer
-│   └── recording/                  # Session recording system
-│       ├── session_recorder.py    # Core recording functionality
-│       ├── recording_manager.py   # Recording coordination
-│       └── file_rotation_manager.py # File management
-├── assets/                         # Application assets
-│   ├── ats.ico                    # Application icon
-│   └── rdp.exe                    # RDP executable
-└── docs/                          # Documentation
+│   ├── main.py                     # Lógica principal da aplicação
+│   ├── app_window.py               # Janela principal da UI
+│   ├── config.py                   # Gerenciamento de configuração
+│   ├── utils.py                    # Funções utilitárias
+│   ├── dialogs.py                  # Diálogos da UI
+│   ├── admin_panels/               # Interface administrativa
+│   ├── db/                         # Camada de banco de dados
+│   │   ├── db_service.py          # Serviço de banco de dados
+│   │   ├── database_manager.py    # Gerenciamento de conexão
+│   │   └── repositories/          # Camada de acesso a dados
+│   └── recording/                  # Sistema de gravação de sessões
+│       ├── session_recorder.py    # Funcionalidade principal de gravação
+│       ├── recording_manager.py   # Coordenação de gravação
+│       └── file_rotation_manager.py # Gerenciamento de arquivos
+├── assets/                         # Assets da aplicação
+│   ├── ats.ico                    # Ícone da aplicação
+│   └── rdp.exe                    # Executável RDP
+└── docs/                          # Documentação
 ```
 
-## 🔒 Security Considerations
+## 🔒 Considerações de Segurança
 
-### Data Protection
+### Proteção de Dados
 
-- Environment variables for sensitive configuration
-- Encrypted database connections
-- Secure recording file storage
-- Audit trail for all actions
+- Variáveis de ambiente para configuração sensível
+- Conexões de banco de dados criptografadas
+- Armazenamento seguro de arquivos de gravação
+- Trilha de auditoria para todas as ações
 
-### Recording Privacy
+### Privacidade de Gravação
 
-- Configurable recording scope
-- Automatic cleanup policies
-- Access control for recordings
-- Privacy compliance features
+- Escopo de gravação configurável
+- Políticas de limpeza automática
+- Controle de acesso para gravações
 
-## 🐛 Troubleshooting
+### Performance
 
-### Common Issues
+- Gravação leve em segundo plano
+- Otimização automática de qualidade
+- Uso mínimo de recursos do sistema
+- Interface responsiva
 
-**Application won't start**
+## 🐛 Solução de Problemas
+
+### Problemas Comuns
+
+**Aplicação não inicia**
 
 ```bash
-# Check Python version
+# Verificar versão do Python
 python --version
 
-# Verify dependencies
+# Verificar dependências
 pip check
 
-# Check environment configuration
+# Verificar configuração do ambiente
 python -c "from wats_app.config import load_environment_variables; load_environment_variables()"
 ```
 
-**Recording not working**
+**Gravação não está funcionando**
 
 ```bash
-# Check recording dependencies
+# Verificar dependências de gravação
 pip install opencv-python mss numpy pywin32 psutil
 
-# Verify recording configuration
+# Verificar configuração de gravação
 python -c "from wats_app.config import Settings; s=Settings(); print(s.get_recording_config())"
 ```
 
-**Database connection issues**
+**Problemas de conexão com banco de dados**
 
-- Verify database server accessibility
-- Check credentials in .env file
-- Ensure database exists and user has permissions
+- Verificar acessibilidade do servidor de banco de dados
+- Verificar credenciais no arquivo .env
+- Garantir que o banco de dados existe e o usuário tem permissões
 
-## 📝 Contributing
+## 🤝 Contribuindo
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes
-4. Add tests if applicable
-5. Commit your changes: `git commit -am 'Add feature'`
-6. Push to the branch: `git push origin feature-name`
-7. Submit a pull request
+1. Fork o repositório
+2. Crie uma branch para sua feature: `git checkout -b nome-da-feature`
+3. Faça suas mudanças
+4. Adicione testes se aplicável
+5. Commit suas mudanças: `git commit -am 'Adicionar feature'`
+6. Push para a branch: `git push origin nome-da-feature`
+7. Submeta um pull request
 
-## 📄 License
+## 📄 Licença
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
 
-## 👥 Authors
+## 👥 Autores
 
-- **Development Team** - Initial work and ongoing maintenance
+- **Equipe de Desenvolvimento** - Trabalho inicial e manutenção contínua
 
-## 🙏 Acknowledgments
+## 🙏 Agradecimentos
 
-- CustomTkinter for modern UI components
-- MSS for efficient screen capture
-- OpenCV for video processing
-- PyInstaller for executable creation
+- CustomTkinter por componentes modernos de UI
+- MSS por captura eficiente de tela
+- OpenCV por processamento de vídeo
+- PyInstaller por criação de executáveis
 
-## 📊 Version History
+## 📊 Histórico de Versões
 
 - **V4.2** (2025-10-26)
 
-  - Added comprehensive session recording system
-  - Multiple recording modes (full screen, RDP window, active window)
-  - Automatic file rotation and cleanup
-  - Performance optimizations
-  - Enhanced error handling
+  - Adicionado sistema abrangente de gravação de sessões
+  - Múltiplos modos de gravação (tela cheia, janela RDP, janela ativa)
+  - Rotação automática de arquivos e limpeza
+  - Otimizações de performance
+  - Tratamento de erros aprimorado
 
-- **V4.1** (Previous)
-  - Core RDP connection management
-  - Database integration
-  - Admin panel functionality
-  - Basic UI framework
+- **V4.1** (Anterior)
+  - Gerenciamento central de conexões RDP
+  - Integração com banco de dados
+  - Funcionalidade de painel administrativo
+  - Framework básico de UI
 
 ---
 
-For detailed documentation and advanced configuration options, please refer to the documentation files in the project root.
+Para documentação detalhada e opções avançadas de configuração, consulte os arquivos de documentação na raiz do projeto.
