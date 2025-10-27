@@ -100,46 +100,81 @@ class SessionRecorder:
         
         return monitor
 
+    def _try_restore_window(self, hwnd: int) -> bool:
+        """Try to restore a minimized window."""
+        try:
+            # Check if window is minimized
+            if win32gui.IsIconic(hwnd):
+                logging.info("Window is minimized, attempting to restore")
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                time.sleep(0.5)  # Give time for window to restore
+                return True
+            return False
+        except Exception as e:
+            logging.warning(f"Failed to restore window: {e}")
+            return False
+
     def _find_rdp_window(self, connection_info: Dict[str, Any]) -> Optional[int]:
         """Find RDP window handle based on connection information."""
         try:
             target_title = connection_info.get('name', '')
             target_ip = connection_info.get('ip', '')
             
+            # Extract IP and port from connection info
+            if ':' in target_ip:
+                ip_part = target_ip.split(':')[0]
+            else:
+                ip_part = target_ip
+            
             def enum_window_callback(hwnd, windows):
                 if win32gui.IsWindowVisible(hwnd):
                     window_title = win32gui.GetWindowText(hwnd).lower()
                     
-                    # Look for RDP-related window titles
+                    # Look for RDP-related window titles with specific connection info
                     rdp_indicators = [
-                        target_title.lower() if target_title else '',
-                        target_ip if target_ip else '',
-                        'remote desktop',
+                        'remote desktop connection',
                         'área de trabalho remota',
                         'rdp',
-                        'terminal services'
+                        'mstsc'
                     ]
                     
-                    for indicator in rdp_indicators:
-                        if indicator and indicator in window_title:
-                            try:
-                                # Get process info to verify it's an RDP-related process
-                                _, process_id = win32process.GetWindowThreadProcessId(hwnd)
-                                process = psutil.Process(process_id)
-                                process_name = process.name().lower()
-                                
-                                # Check if it's a known RDP process
-                                rdp_processes = ['mstsc.exe', 'rdp.exe', 'rdpclip.exe', 'rdpcore.dll']
-                                if any(rdp_proc in process_name for rdp_proc in rdp_processes):
-                                    windows.append({
-                                        'hwnd': hwnd,
-                                        'title': window_title,
-                                        'process_name': process_name,
-                                        'process_id': process_id
-                                    })
-                                    break
-                            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                continue
+                    # Check if window title contains RDP indicators
+                    is_rdp_window = any(indicator in window_title for indicator in rdp_indicators)
+                    
+                    # Also check if title contains target info
+                    title_contains_target = False
+                    if target_title:
+                        title_contains_target = target_title.lower() in window_title
+                    if ip_part:
+                        title_contains_target = title_contains_target or ip_part in window_title
+                    
+                    if is_rdp_window or title_contains_target:
+                        try:
+                            # Get process info to verify it's an RDP-related process
+                            _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+                            process = psutil.Process(process_id)
+                            process_name = process.name().lower()
+                            
+                            # Check if it's a known RDP process
+                            rdp_processes = ['mstsc.exe', 'rdp.exe', 'rdpclip.exe']
+                            if any(rdp_proc in process_name for rdp_proc in rdp_processes):
+                                windows.append({
+                                    'hwnd': hwnd,
+                                    'title': window_title,
+                                    'process_name': process_name,
+                                    'process_id': process_id,
+                                    'score': 2 if title_contains_target else 1  # Higher score for exact match
+                                })
+                            elif is_rdp_window:  # RDP indicator in title but different process
+                                windows.append({
+                                    'hwnd': hwnd,
+                                    'title': window_title,
+                                    'process_name': process_name,
+                                    'process_id': process_id,
+                                    'score': 1
+                                })
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass  # Skip this window if we can't access process info
                 
                 return True
             
@@ -147,10 +182,16 @@ class SessionRecorder:
             win32gui.EnumWindows(enum_window_callback, windows)
             
             if windows:
-                # Return the first matching window
+                # Sort by score (highest first) and return the best match
+                windows.sort(key=lambda x: x['score'], reverse=True)
                 best_match = windows[0]
-                logging.info(f"Found RDP window: {best_match['title']} (PID: {best_match['process_id']})")
-                return best_match['hwnd']
+                hwnd = best_match['hwnd']
+                logging.info(f"Found RDP window: {best_match['title']} (PID: {best_match['process_id']}, Score: {best_match['score']})")
+                
+                # Try to restore if minimized
+                self._try_restore_window(hwnd)
+                
+                return hwnd
             else:
                 logging.warning("No RDP window found, falling back to full screen recording")
                 return None
@@ -171,12 +212,20 @@ class SessionRecorder:
         """Get window rectangle coordinates."""
         try:
             rect = win32gui.GetWindowRect(hwnd)
-            return {
+            window_rect = {
                 "left": rect[0],
                 "top": rect[1],
                 "width": rect[2] - rect[0],
                 "height": rect[3] - rect[1]
             }
+            
+            # Check if window is minimized or off-screen
+            if (window_rect["left"] < -1000 or window_rect["top"] < -1000 or 
+                window_rect["width"] < 100 or window_rect["height"] < 100):
+                logging.warning(f"Window appears minimized or invalid: {window_rect}")
+                return None
+                
+            return window_rect
         except Exception as e:
             logging.error(f"Error getting window rect: {e}")
             return None
@@ -193,7 +242,94 @@ class SessionRecorder:
             self.monitor = window_rect
             logging.info(f"Updated monitor for window: {window_rect}")
         else:
-            logging.warning("Failed to get window rect, using full screen")
+            logging.warning("Window rect invalid, switching to full screen recording")
+            # Switch to full screen mode when window is not properly visible
+            self.recording_mode = "full_screen"
+            self.target_window_handle = None
+            self.monitor = self._get_monitor_config()
+
+    def _sanitize_connection_info(self, connection_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Remove sensitive information from connection_info before saving to metadata.
+        Implements session protection by not storing passwords and sensitive session data.
+        
+        Args:
+            connection_info: Original connection information dictionary
+            
+        Returns:
+            Sanitized dictionary without passwords, usernames, or session data
+        """
+        if not connection_info:
+            return {}
+        
+        # Check if session protection is enabled in config
+        try:
+            from ..config import get_config
+            config = get_config()
+            protection_config = config.get('recording', {}).get('session_protection', {})
+            
+            protection_enabled = protection_config.get('enabled', True)
+            sanitize_metadata = protection_config.get('sanitize_metadata', True)
+            remove_sensitive = protection_config.get('remove_sensitive_fields', True)
+            log_actions = protection_config.get('log_protection_actions', True)
+            
+            if not protection_enabled or not sanitize_metadata:
+                if log_actions:
+                    logging.warning("Session protection is DISABLED - sensitive data may be stored in metadata")
+                return connection_info.copy()
+                
+        except Exception as e:
+            # If config loading fails, default to protection enabled
+            logging.warning(f"Could not load session protection config, defaulting to enabled: {e}")
+            remove_sensitive = True
+            log_actions = True
+        
+        # Define sensitive fields that should NOT be saved to disk/database
+        sensitive_fields = {
+            'password', 'senha', 'pass', 'pwd', 'passwd', 'passw',
+            'user', 'username', 'usuario', 'login', 'user_name', 'userid',
+            'session_id', 'session_token', 'token', 'auth_token', 'access_token',
+            'credentials', 'credential', 'auth', 'authentication', 'authdata',
+            'private_key', 'key', 'secret', 'hash', 'cert', 'certificate',
+            'domain', 'dominio', 'dn', 'distinguished_name'
+        }
+        
+        # Create sanitized copy - only keep safe fields
+        sanitized = {}
+        sensitive_count = 0
+        
+        for key, value in connection_info.items():
+            key_lower = key.lower()
+            
+            # Check if this field contains sensitive information
+            is_sensitive = any(sensitive_field in key_lower for sensitive_field in sensitive_fields)
+            
+            if not is_sensitive or not remove_sensitive:
+                # Keep non-sensitive fields like: name, ip, port, connection_type, etc.
+                sanitized[key] = value
+            else:
+                # Replace sensitive data with protection placeholder
+                sanitized[key] = "[PROTECTED_BY_SESSION_SECURITY]"
+                sensitive_count += 1
+        
+        # Always include some basic metadata for identification (if available)
+        safe_fields = ['name', 'ip', 'host', 'hostname', 'server', 'port', 'connection_type', 'protocol', 'connection_name']
+        for field in safe_fields:
+            if field in connection_info and field not in sanitized:
+                sanitized[field] = connection_info[field]
+        
+        # Add security protection metadata
+        sanitized['_session_protection'] = {
+            'enabled': True,
+            'sanitized_at': datetime.now().isoformat(),
+            'sensitive_fields_removed': sensitive_count,
+            'protection_notice': 'Authentication credentials and session data are protected and not stored'
+        }
+        
+        if log_actions:
+            logging.info(f"Session protection applied - sanitized {sensitive_count} sensitive fields from connection metadata")
+        
+        return sanitized
 
     def start_recording(self, session_id: str, connection_info: Dict[str, Any]) -> bool:
         """
@@ -218,8 +354,16 @@ class SessionRecorder:
             if self.recording_mode == "rdp_window":
                 self.target_window_handle = self._find_rdp_window(connection_info)
                 if self.target_window_handle:
-                    self._update_monitor_for_window(self.target_window_handle)
-                    logging.info(f"Recording RDP window for session {session_id}")
+                    # Try to get window position - if invalid, fallback to full screen
+                    window_rect = self._get_window_rect(self.target_window_handle)
+                    if window_rect:
+                        self._update_monitor_for_window(self.target_window_handle)
+                        logging.info(f"Recording RDP window for session {session_id}")
+                    else:
+                        logging.warning(f"RDP window found but not accessible/visible, using full screen")
+                        self.recording_mode = "full_screen"
+                        self.target_window_handle = None
+                        self.monitor = self._get_monitor_config()
                 else:
                     logging.warning(f"RDP window not found for session {session_id}, using full screen")
                     self.recording_mode = "full_screen"  # Fallback
@@ -235,10 +379,11 @@ class SessionRecorder:
             
             # Full screen mode uses the initial monitor configuration
             
-            # Create metadata file
+            # Create metadata file with session protection - DO NOT save sensitive data
+            sanitized_connection_info = self._sanitize_connection_info(connection_info)
             metadata = {
                 "session_id": session_id,
-                "connection_info": connection_info,
+                "connection_info": sanitized_connection_info,
                 "start_time": datetime.now().isoformat(),
                 "recorder_settings": {
                     "fps": self.fps,
@@ -303,6 +448,9 @@ class SessionRecorder:
 
     def _recording_loop(self, session_id: str, connection_info: Dict[str, Any]):
         """Main recording loop running in a separate thread."""
+        # Create a new MSS instance for this thread to avoid thread-safety issues
+        thread_sct = mss.mss()
+        
         try:
             self._create_new_video_file(session_id, connection_info)
             
@@ -314,7 +462,7 @@ class SessionRecorder:
                 
                 # Check if we need to capture a frame
                 if current_time - last_frame_time >= frame_interval:
-                    self._capture_and_write_frame()
+                    self._capture_and_write_frame(thread_sct)
                     last_frame_time = current_time
                     
                     # Check if we need to rotate the file
@@ -327,9 +475,14 @@ class SessionRecorder:
         except Exception as e:
             logging.error(f"Error in recording loop: {e}")
         finally:
+            # Clean up thread-specific MSS instance
+            try:
+                thread_sct.close()
+            except Exception as e:
+                logging.warning(f"Error closing MSS instance: {e}")
             self._cleanup_current_recording()
 
-    def _capture_and_write_frame(self):
+    def _capture_and_write_frame(self, sct_instance):
         """Capture a screen frame and write it to the video file."""
         try:
             # Update window position if recording specific window
@@ -349,8 +502,8 @@ class SessionRecorder:
                     logging.error(f"Error checking window status: {e}")
                     # Continue with last known position
             
-            # Capture screen/window
-            screenshot = self.sct.grab(self.monitor)
+            # Capture screen/window using thread-specific MSS instance
+            screenshot = sct_instance.grab(self.monitor)
             
             # Convert to numpy array
             frame = np.array(screenshot)
@@ -403,10 +556,10 @@ class SessionRecorder:
             if not self.current_writer.isOpened():
                 raise Exception("Failed to open VideoWriter")
                 
-            logging.info(f"Created new video file: {self.current_file}")
+            logging.info(f"Created new video file: {self.current_file} (dimensions: {width}x{height})")
             
         except Exception as e:
-            logging.error(f"Error creating video file: {e}")
+            logging.error(f"Error creating video file: {e}", exc_info=True)
             raise
 
     def _should_rotate_file(self) -> bool:

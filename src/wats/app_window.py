@@ -39,7 +39,7 @@ else:
             pass
 
 try:
-    from docs.session_protection import CreateSessionProtectionDialog, ValidateSessionPasswordDialog, session_protection_manager
+    from .session_protection import CreateSessionProtectionDialog, ValidateSessionPasswordDialog, session_protection_manager
 except ImportError:
     # Fallback se não encontrar o módulo
     CreateSessionProtectionDialog = None
@@ -271,7 +271,7 @@ class Application(ctk.CTk):
             # Configura o sistema de proteção de sessão com acesso ao DB
             if CreateSessionProtectionDialog and session_protection_manager:
                 try:
-                    from docs.session_protection import configure_session_protection_with_db
+                    from .session_protection import configure_session_protection_with_db
                     configure_session_protection_with_db(self.db)
                     logging.info("Sistema de proteção de sessão configurado com validação no servidor")
                 except Exception as e:
@@ -380,6 +380,21 @@ class Application(ctk.CTk):
         )
         self.theme_button.grid(row=0, column=1, padx=(0, 10), pady=10)
 
+        # Botão de gravações (se disponível)
+        if self.recording_manager:
+            self.recording_button = ctk.CTkButton(
+                header_frame,
+                text="📹",
+                width=40,
+                height=40,
+                font=("Segoe UI", 20),
+                command=self._show_recording_info
+            )
+            self.recording_button.grid(row=0, column=2, padx=(0, 10), pady=10)
+            admin_column = 3
+        else:
+            admin_column = 2
+
         self.admin_button = ctk.CTkButton(
             header_frame,
             text="⚙️",
@@ -388,7 +403,7 @@ class Application(ctk.CTk):
             font=("Segoe UI", 20),
             command=self._open_admin_login
         )
-        self.admin_button.grid(row=0, column=2, padx=(0, 15), pady=10)
+        self.admin_button.grid(row=0, column=admin_column, padx=(0, 15), pady=10)
         # --- FIM DO CABEÇALHO ---
 
         # --- CONTAINER DA TREEVIEW (O código restante deve estar aqui) ---
@@ -452,6 +467,11 @@ class Application(ctk.CTk):
             self.context_menu.add_separator()
             self.context_menu.add_command(label='🔒 Proteger Sessão', command=self._protect_session)
             self.context_menu.add_command(label='🔓 Remover Proteção', command=self._remove_session_protection)
+        
+        # Adiciona opção de gravações
+        if self.recording_manager:
+            self.context_menu.add_separator()
+            self.context_menu.add_command(label='📹 Ver Gravações', command=self._show_recording_info)
 
         self.tree.bind('<Double-1>', self._on_item_double_click)
         self.tree.bind('<Button-3>', self._show_context_menu)
@@ -931,10 +951,55 @@ class Application(ctk.CTk):
             # Acesso autorizado - prossegue normalmente
             logging.info(f"🔓 Acesso autorizado para {self.user_session_name} ao servidor {data.get('title')}")
         
-        rdp_exe_path = os.path.join(ASSETS_DIR, 'rdp.exe') 
+        # DEBUG: Verificar se logging está funcionando
+        print(f"[DEBUG CONSOLE] Iniciando conexão RDP para {data.get('title')}")
+        logging.info(f"[DEBUG LOGGING] Iniciando conexão RDP para {data.get('title')}")
+        
+        # DEBUG: Verificar onde estão os logs
+        from .config import LOG_FILE, USER_DATA_DIR
+        print(f"[DEBUG] USER_DATA_DIR: {USER_DATA_DIR}")
+        print(f"[DEBUG] LOG_FILE: {LOG_FILE}")
+        print(f"[DEBUG] Log file exists: {os.path.exists(LOG_FILE)}")
+        
+        # Verificar handlers do logger
+        root_logger = logging.getLogger()
+        print(f"[DEBUG] Logger level: {root_logger.level}")
+        print(f"[DEBUG] Logger handlers: {len(root_logger.handlers)}")
+        for i, handler in enumerate(root_logger.handlers):
+            print(f"[DEBUG] Handler {i}: {type(handler).__name__}")
+        
+        rdp_exe_path = os.path.join(ASSETS_DIR, 'rdp.exe')
+        
+        # Debug detalhado para localizar o rdp.exe
+        logging.info(f"[RDP] BASE_DIR: {BASE_DIR}")
+        logging.info(f"[RDP] ASSETS_DIR: {ASSETS_DIR}")
+        logging.info(f"[RDP] Procurando rdp.exe em: {rdp_exe_path}")
+        logging.info(f"[RDP] sys.frozen: {getattr(sys, 'frozen', False)}")
+        logging.info(f"[RDP] sys.executable: {sys.executable}")
+        
         if not os.path.exists(rdp_exe_path):
-            messagebox.showerror("Erro", f"Executável não encontrado:\n{rdp_exe_path}")
-            return
+            # Tenta localizar o rdp.exe em outros locais possíveis
+            possible_paths = [
+                os.path.join(os.path.dirname(sys.executable), 'assets', 'rdp.exe'),
+                os.path.join(os.path.dirname(sys.executable), '_internal', 'assets', 'rdp.exe'),
+                os.path.join(os.getcwd(), 'assets', 'rdp.exe'),
+                os.path.join(BASE_DIR, '..', 'assets', 'rdp.exe')
+            ]
+            
+            found_path = None
+            for path in possible_paths:
+                logging.info(f"[RDP] Tentando: {path}")
+                if os.path.exists(path):
+                    found_path = path
+                    logging.info(f"[RDP] Encontrado rdp.exe em: {path}")
+                    break
+            
+            if found_path:
+                rdp_exe_path = found_path
+            else:
+                logging.error(f"[RDP] rdp.exe não encontrado em nenhum local")
+                messagebox.showerror("Erro", f"Executável não encontrado:\n{rdp_exe_path}\n\nCaminhos testados:\n" + "\n".join(possible_paths))
+                return
         
         # Start recording if enabled
         session_id = None
@@ -1039,7 +1104,7 @@ class Application(ctk.CTk):
             logging.info(f"🔓 Acesso autorizado para {self.user_session_name} ao servidor {data.get('title')} via MSTSC")
 
         if data.get('username'):
-            msg = f"'{data['username']}' já está conectado(a) a este cliente.\n\Deseja continuar e conectar mesmo assim?"
+            msg = f"'{data['username']}' já está conectado(a) a este cliente.\nDeseja continuar e conectar mesmo assim?"
             if not messagebox.askyesno("Alerta: Conexão em Uso", msg):
                 return
 
@@ -1055,25 +1120,65 @@ class Application(ctk.CTk):
         Thread(target=lambda: self._execute_connection(data, task), daemon=True).start()
 
     def _release_connection(self): 
-        """Envia um comando para liberar uma conexão em uso."""
+        """Libera uma conexão protegida solicitando a senha de proteção."""
         data = self._get_selected_item_data()
-        if not data: return
-        
-        user_to_release = data.get('username')
-        if not user_to_release:
-            messagebox.showinfo("Informação", "Não há usuário conectado a este cliente para liberar.")
+        if not data: 
             return
         
-        user_to_release_first = user_to_release.split('|')[0] # Pega só o primeiro
+        # Verifica se existe proteção de sessão
+        if not session_protection_manager or not session_protection_manager.is_session_protected(data.get('db_id')):
+            messagebox.showinfo("Sem Proteção", "Este servidor não possui proteção ativa para liberar.")
+            return
         
-        msg = f"Tem certeza que deseja liberar a conexão de '{user_to_release_first}' para o cliente '{data['title']}'?"
-        if messagebox.askyesno("Confirmar Liberação", msg):
-            # --- ATUALIZADO: Acessa repositório de logs ---
-            if self.db.logs.delete_connection_log(data['db_id'], user_to_release_first):
-                messagebox.showinfo("Sucesso", f"Comando de liberação enviado para '{user_to_release_first}'.")
-                self._populate_tree()
-            else:
-                messagebox.showerror("Erro", "Falha ao enviar comando de liberação.")
+        # Obtém informações da proteção
+        protection_info = session_protection_manager.get_session_protection_info(data.get('db_id'))
+        protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
+        
+        # Mostra diálogo de validação de senha para liberação
+        validation_dialog = ValidateSessionPasswordDialog(
+            parent=self,
+            connection_data=data,
+            requesting_user=self.user_session_name,
+            protected_by=protected_by,
+            unlock_mode=True  # Indica que é para liberar a conexão
+        )
+        
+        # Aguarda resultado da validação
+        validation_dialog.wait_window()
+        result = validation_dialog.get_result()
+        
+        if not result or not result.get("validated"):
+            # Senha incorreta - não prossegue com a liberação
+            logging.warning(f"🔒 Tentativa de liberação negada para {self.user_session_name} do servidor {data.get('title')}")
+            messagebox.showwarning(
+                "Acesso Negado", 
+                f"Não foi possível liberar a proteção do servidor '{data.get('title')}'.\n\n"
+                "Você não forneceu a senha correta."
+            )
+            return
+        
+        # Senha correta - remove a proteção
+        success = session_protection_manager.remove_session_protection(
+            data.get('db_id'),
+            self.user_session_name
+        )
+        
+        if success:
+            logging.info(f"🔓 Conexão liberada por {self.user_session_name} para {data.get('title')}")
+            messagebox.showinfo(
+                "Conexão Liberada",
+                f"Proteção removida com sucesso!\n\n"
+                f"O servidor '{data.get('title')}' está agora disponível para todos os usuários."
+            )
+            # Atualiza a lista para refletir as mudanças
+            self._populate_tree()
+        else:
+            logging.error(f"Falha ao liberar proteção para {data.get('title')}")
+            messagebox.showerror(
+                "Erro na Liberação",
+                f"Ocorreu um erro ao tentar liberar a proteção.\n\n"
+                "Tente novamente ou contate o administrador do sistema."
+            )
 
     def _open_admin_login(self): 
         """Abre o diálogo para login de administrador."""
@@ -1260,6 +1365,153 @@ class Application(ctk.CTk):
                         self.title(current_title.replace("🔴 ", ""))
         except Exception as e:
             logging.error(f"Error updating recording status UI: {e}")
+
+    def _check_session_recordings(self, session_id: str = None):
+        """
+        Verifica se existem gravações para uma sessão específica ou lista todas.
+        
+        Args:
+            session_id: ID da sessão para verificar. Se None, lista todas as gravações.
+            
+        Returns:
+            List[Dict]: Lista de informações sobre gravações encontradas
+        """
+        if not self.recording_manager:
+            return []
+        
+        try:
+            from pathlib import Path
+            recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
+            recordings_info = []
+            
+            if session_id:
+                # Verifica gravações específicas da sessão
+                video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
+                metadata_file = recordings_dir / f"{session_id}_metadata.json"
+                
+                if video_files or metadata_file.exists():
+                    info = {
+                        "session_id": session_id,
+                        "video_files": [str(f) for f in video_files],
+                        "metadata_file": str(metadata_file) if metadata_file.exists() else None,
+                        "total_size_mb": sum(f.stat().st_size for f in video_files) / (1024 * 1024),
+                        "file_count": len(video_files)
+                    }
+                    recordings_info.append(info)
+            else:
+                # Lista todas as gravações
+                all_videos = list(recordings_dir.glob("*.mp4"))
+                sessions = {}
+                
+                for video_file in all_videos:
+                    # Extrai session_id do nome do arquivo (formato: session_id_part_X.mp4)
+                    name_parts = video_file.stem.split('_')
+                    if len(name_parts) >= 2:
+                        session_id = '_'.join(name_parts[:-2]) if name_parts[-2] == 'part' else '_'.join(name_parts[:-1])
+                        
+                        if session_id not in sessions:
+                            sessions[session_id] = {
+                                "session_id": session_id,
+                                "video_files": [],
+                                "metadata_file": None,
+                                "total_size_mb": 0,
+                                "file_count": 0
+                            }
+                        
+                        sessions[session_id]["video_files"].append(str(video_file))
+                        sessions[session_id]["total_size_mb"] += video_file.stat().st_size / (1024 * 1024)
+                        sessions[session_id]["file_count"] += 1
+                        
+                        # Verifica se existe metadata
+                        metadata_file = recordings_dir / f"{session_id}_metadata.json"
+                        if metadata_file.exists():
+                            sessions[session_id]["metadata_file"] = str(metadata_file)
+                
+                recordings_info = list(sessions.values())
+            
+            return recordings_info
+            
+        except Exception as e:
+            logging.error(f"Erro ao verificar gravações: {e}")
+            return []
+
+    def _show_recording_info(self):
+        """Mostra informações sobre gravações existentes."""
+        recordings = self._check_session_recordings()
+        
+        if not recordings:
+            messagebox.showinfo(
+                "Gravações", 
+                f"Nenhuma gravação encontrada.\n\n"
+                f"Diretório de gravações: {self.settings.RECORDING_OUTPUT_DIR}"
+            )
+            return
+        
+        # Cria uma janela com informações das gravações
+        info_window = ctk.CTkToplevel(self)
+        info_window.title("Informações de Gravação")
+        info_window.geometry("600x400")
+        info_window.transient(self)
+        
+        # Frame principal
+        main_frame = ctk.CTkFrame(info_window)
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Título
+        title_label = ctk.CTkLabel(
+            main_frame, 
+            text="📹 Gravações de Sessão",
+            font=("Segoe UI", 16, "bold")
+        )
+        title_label.pack(pady=(10, 5))
+        
+        # Diretório
+        dir_label = ctk.CTkLabel(
+            main_frame,
+            text=f"Diretório: {self.settings.RECORDING_OUTPUT_DIR}",
+            font=("Segoe UI", 10)
+        )
+        dir_label.pack(pady=(0, 10))
+        
+        # Frame scrollável para lista
+        scroll_frame = ctk.CTkScrollableFrame(main_frame)
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        
+        # Lista as gravações
+        for recording in recordings:
+            session_frame = ctk.CTkFrame(scroll_frame)
+            session_frame.pack(fill="x", pady=5)
+            
+            session_info = (
+                f"🎥 Sessão: {recording['session_id']}\n"
+                f"📁 Arquivos: {recording['file_count']}\n" 
+                f"💾 Tamanho: {recording['total_size_mb']:.1f} MB\n"
+                f"📄 Metadata: {'✅' if recording['metadata_file'] else '❌'}"
+            )
+            
+            info_label = ctk.CTkLabel(
+                session_frame,
+                text=session_info,
+                justify="left",
+                anchor="w"
+            )
+            info_label.pack(padx=10, pady=10, fill="x")
+        
+        # Botão para abrir diretório
+        def open_recordings_dir():
+            try:
+                import subprocess
+                subprocess.run(['explorer', self.settings.RECORDING_OUTPUT_DIR], check=True)
+            except Exception as e:
+                logging.error(f"Erro ao abrir diretório: {e}")
+                messagebox.showerror("Erro", f"Não foi possível abrir o diretório:\n{e}")
+        
+        open_button = ctk.CTkButton(
+            main_frame,
+            text="📂 Abrir Diretório de Gravações",
+            command=open_recordings_dir
+        )
+        open_button.pack(pady=10)
 
     # Métodos para Sistema de Acesso Colaborativo
     

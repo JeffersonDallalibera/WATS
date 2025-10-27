@@ -2,6 +2,8 @@
 
 import logging
 import threading
+import subprocess
+import shutil
 import time
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
@@ -59,6 +61,7 @@ class RecordingManager:
             True if initialization successful, False otherwise
         """
         try:
+            logging.info(f"RecordingManager.initialize() called - RECORDING_ENABLED={getattr(self.settings, 'RECORDING_ENABLED', None)}, OUTPUT_DIR={getattr(self.settings, 'RECORDING_OUTPUT_DIR', None)}")
             if not self.settings.RECORDING_ENABLED:
                 logging.info("Recording is disabled in settings")
                 return True
@@ -118,7 +121,7 @@ class RecordingManager:
             return True
             
         except Exception as e:
-            logging.error(f"Failed to initialize recording system: {e}")
+            logging.error(f"Failed to initialize recording system: {e}", exc_info=True)
             self.is_initialized = False
             return False
 
@@ -184,6 +187,28 @@ class RecordingManager:
             session_id = self.current_session_id
             
             if self.recorder.stop_recording():
+                # Optionally compress recording before upload
+                try:
+                    compression_enabled = getattr(self.settings, 'RECORDING_COMPRESSION_ENABLED', True)
+                    compression_crf = getattr(self.settings, 'RECORDING_COMPRESSION_CRF', 28)
+                except Exception:
+                    compression_enabled = True
+                    compression_crf = 28
+
+                recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
+                # Find the recorded video file for this session (if any)
+                video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
+                if compression_enabled and video_files:
+                    # Compress in background to avoid blocking shutdown
+                    video_file = video_files[0]
+                    try:
+                        Thread = threading.Thread
+                        t = Thread(target=self._compress_recording_async, args=(video_file, compression_crf), daemon=True)
+                        t.start()
+                        logging.info(f"Started background compression for {video_file.name}")
+                    except Exception as e:
+                        logging.warning(f"Failed to start compression thread: {e}")
+
                 # Trigger upload if API is available and auto_upload is enabled
                 if (self.api_manager and 
                     hasattr(self.settings, 'API_AUTO_UPLOAD') and 
@@ -388,6 +413,68 @@ class RecordingManager:
                 
         except Exception as e:
             logging.error(f"Error queuing recording upload for {session_id}: {e}")
+
+    def _compress_recording_async(self, video_file: Path, crf: int = 28):
+        """Compress a recording file using ffmpeg in a background thread.
+
+        Replaces the original file on success (keeps original on failure).
+        """
+        try:
+            if not video_file.exists():
+                logging.warning(f"Compression requested but file not found: {video_file}")
+                return
+
+            ffmpeg_cmd = shutil.which('ffmpeg')
+            if not ffmpeg_cmd:
+                logging.warning("ffmpeg not found in PATH; skipping compression")
+                return
+
+            tmp_file = video_file.with_suffix('.tmp.mp4')
+            # Build ffmpeg command: re-encode with libx264 and CRF
+            cmd = [
+                ffmpeg_cmd,
+                '-y',
+                '-i', str(video_file),
+                '-c:v', 'libx264',
+                '-preset', 'veryfast',
+                '-crf', str(crf),
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                str(tmp_file)
+            ]
+
+            logging.info(f"Compressing {video_file.name} -> CRF={crf}")
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0:
+                logging.error(f"ffmpeg failed for {video_file.name}: {proc.stderr}")
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink()
+                    except Exception:
+                        pass
+                return
+
+            # Replace original with compressed file
+            try:
+                backup = video_file.with_suffix('.bak.mp4')
+                video_file.rename(backup)
+                tmp_file.rename(video_file)
+                try:
+                    backup.unlink()
+                except Exception:
+                    logging.debug(f"Could not remove backup {backup}")
+                logging.info(f"Compression completed and replaced original: {video_file.name}")
+            except Exception as e:
+                logging.error(f"Failed to replace original file after compression: {e}")
+                # Cleanup tmp
+                if tmp_file.exists():
+                    try:
+                        tmp_file.unlink()
+                    except Exception:
+                        pass
+
+        except Exception as e:
+            logging.error(f"Unexpected error during compression: {e}", exc_info=True)
     
     def _upload_older_recordings_async(self):
         """Upload older recordings in a background thread."""

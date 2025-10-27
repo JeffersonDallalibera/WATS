@@ -17,8 +17,20 @@ def get_base_dir() -> str:
     """
     # Para executável (--onefile ou --onedir)
     if getattr(sys, 'frozen', False):
-        # sys.executable é o caminho para o .exe
-        return os.path.dirname(sys.executable)
+        # Para PyInstaller --onedir: sys.executable aponta para WATS.exe
+        # Assets estão em: WATS/_internal/assets/
+        # Mas também podem estar na raiz: WATS/assets/
+        exe_dir = os.path.dirname(sys.executable)
+        
+        # Primeiro tenta na raiz (WATS/assets/)
+        if os.path.exists(os.path.join(exe_dir, 'assets')):
+            return exe_dir
+        # Se não encontrar, tenta em _internal (WATS/_internal/)
+        elif os.path.exists(os.path.join(exe_dir, '_internal', 'assets')):
+            return os.path.join(exe_dir, '_internal')
+        else:
+            # Fallback para a pasta do executável
+            return exe_dir
     # Para script Python normal
     else:
         # __file__ -> src/wats/config.py
@@ -36,10 +48,17 @@ ASSETS_DIR: Final[str] = os.path.join(BASE_DIR, 'assets')
 def get_user_data_dir() -> str:
     """
     Retorna o diretório para dados do usuário (logs, settings json),
-    sempre usando a pasta onde o WATS está instalado/executado.
+    sempre usando a pasta onde o WATS está executado (dist/WATS).
     """
-    # SEMPRE usa a pasta do executável/script para facilitar verificação de logs
-    user_data_dir = BASE_DIR
+    # Para executável PyInstaller, sempre usa a pasta do executável
+    if getattr(sys, 'frozen', False):
+        # sys.executable aponta para WATS.exe na pasta dist/WATS/
+        user_data_dir = os.path.dirname(sys.executable)
+        logging.debug(f"Modo executável: usando pasta do executável para dados: {user_data_dir}")
+    else:
+        # Para desenvolvimento, usa BASE_DIR (pasta do projeto)
+        user_data_dir = BASE_DIR
+        logging.debug(f"Modo desenvolvimento: usando BASE_DIR para dados: {user_data_dir}")
 
     # Criar o diretório se não existir (ignora erro se já existir)
     try:
@@ -74,14 +93,14 @@ def load_config_json() -> Dict[str, Any]:
     config_paths = []
     
     if getattr(sys, 'frozen', False):
-        # Executável: procura em duas localizações
-        # 1. Embedded no executável (sys._MEIPASS)
+        # Executável: prioriza config.json na pasta do executável (dist/WATS)
+        exe_dir = os.path.dirname(sys.executable)
+        external_path = os.path.join(exe_dir, 'config.json')
+        config_paths.append(external_path)
+        
+        # Fallback: embedded no executável (sys._MEIPASS)
         embedded_path = os.path.join(sys._MEIPASS, 'config.json')
         config_paths.append(embedded_path)
-        
-        # 2. Ao lado do executável (BASE_DIR)
-        external_path = os.path.join(BASE_DIR, 'config.json')
-        config_paths.append(external_path)
     else:
         # Script: primeiro tenta na pasta config/, depois na raiz do projeto
         config_dir_path = os.path.join(BASE_DIR, 'config', 'config.json')
@@ -116,14 +135,14 @@ def load_environment_variables():
     dotenv_paths = []
     
     if getattr(sys, 'frozen', False):
-        # Executável: procura em duas localizações
-        # 1. Embedded no executável (sys._MEIPASS)
+        # Executável: prioriza .env na pasta do executável (dist/WATS)
+        exe_dir = os.path.dirname(sys.executable)
+        external_path = os.path.join(exe_dir, '.env')
+        dotenv_paths.append(external_path)
+        
+        # Fallback: embedded no executável (sys._MEIPASS)
         embedded_path = os.path.join(sys._MEIPASS, '.env')
         dotenv_paths.append(embedded_path)
-        
-        # 2. Ao lado do executável (BASE_DIR)
-        external_path = os.path.join(BASE_DIR, '.env')
-        dotenv_paths.append(external_path)
     else:
         # Script: primeiro tenta na pasta config/, depois na raiz do projeto
         config_dir_path = os.path.join(BASE_DIR, 'config', '.env')
@@ -455,3 +474,60 @@ class Settings:
 
 # --- Instância settings NÃO é criada aqui ---
 # Será criada no run.py após load_environment_variables() ser chamada.
+
+# --- Função utilitária para acesso à configuração ---
+def get_config() -> Dict[str, Any]:
+    """
+    Função utilitária para obter configuração combinada.
+    Retorna um dicionário com configurações do config.json.
+    """
+    try:
+        # Primeiro tenta obter da configuração do ambiente
+        try:
+            from .core.environment import get_config as get_env_config
+            return get_env_config()
+        except ImportError:
+            # Se não conseguir importar o módulo de ambiente, usa config JSON simples
+            pass
+        except Exception as e:
+            logging.warning(f"Erro ao obter configuração do ambiente: {e}")
+    
+        # Fallback para config.json simples
+        config_data = load_config_json()
+        if not config_data:
+            # Se não encontrou config.json, retorna configuração padrão
+            config_data = {
+                'recording': {
+                    'enabled': True,
+                    'mode': 'rdp_window',
+                    'fps': 30,
+                    'quality': 75,
+                    'output_dir': os.path.join(USER_DATA_DIR, 'recordings'),
+                    'compress_enabled': True,
+                    'compress_crf': 28,
+                    'auto_start': True
+                },
+                'app': {
+                    'log_level': 'INFO',
+                    'demo_mode': False
+                }
+            }
+            logging.info("Usando configuração padrão")
+        
+        return config_data
+        
+    except Exception as e:
+        logging.error(f"Erro crítico ao obter configuração: {e}")
+        # Retorna configuração mínima em caso de erro
+        return {
+            'recording': {
+                'enabled': False,
+                'mode': 'full_screen',
+                'fps': 30,
+                'quality': 75,
+                'output_dir': os.path.join(USER_DATA_DIR, 'recordings'),
+                'compress_enabled': False,
+                'compress_crf': 28,
+                'auto_start': False
+            }
+        }

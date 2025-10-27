@@ -21,7 +21,7 @@ def parse_particularities(particularidade_str: str) -> List[Tuple[str, str]]:
     if not particularidade_str or particularidade_str.strip() == '':
         return []
         
-    logging.info(f"Parsing particularidades: '{particularidade_str}'")
+    #logging.info(f"Parsing particularidades: '{particularidade_str}'")
     clients = []
     client_entries = particularidade_str.split('|')
     
@@ -35,7 +35,7 @@ def parse_particularities(particularidade_str: str) -> List[Tuple[str, str]]:
             client_name = f"Cliente {idx}" if len(client_entries) > 1 else "Wiki"
             clients.append((client_name, entry))
     
-    logging.info(f"Total de clientes parseados: {len(clients)}")
+    #logging.info(f"Total de clientes parseados: {len(clients)}")
     return clients
 
 def hash_password_md5(password: str) -> str:

@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from src.wats.db.repositories.base_repository import BaseRepository
 from src.wats.db.exceptions import DatabaseQueryError, DatabaseConnectionError
+from src.wats.db.demo_adapter import DemoAdapter
 
 
 class SessionProtectionRepository(BaseRepository):
@@ -13,10 +14,193 @@ class SessionProtectionRepository(BaseRepository):
 
     def __init__(self, db_manager):
         super().__init__(db_manager)
+        self.demo_adapter = DemoAdapter(db_manager)
 
     def _hash_password(self, password: str) -> str:
         """Gera hash SHA-256 da senha."""
         return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+    def _create_protection_direct(self, cursor, con_codigo, user_name, machine_name, 
+                                 password_hash, duration_minutes, notes, ip_address):
+        """Cria proteção diretamente via INSERT se SP não existir."""
+        try:
+            # Verifica se a tabela existe
+            cursor.execute("""
+                SELECT COUNT(*) FROM sys.tables 
+                WHERE name = 'Sessao_Protecao_WTS'
+            """)
+            table_exists = cursor.fetchone()[0]
+            
+            if table_exists == 0:
+                logging.error("[DB] Tabela Sessao_Protecao_WTS não encontrada")
+                # Cria a tabela se não existir
+                self._create_protection_table(cursor)
+            
+            # Calcula data de expiração
+            expiry_time = datetime.now() + timedelta(minutes=duration_minutes)
+            
+            # Insere diretamente na tabela
+            cursor.execute("""
+                INSERT INTO Sessao_Protecao_WTS (
+                    Con_Codigo, Usu_Nome_Protetor, Usu_Maquina_Protetor, 
+                    Prot_Senha_Hash, Prot_Data_Criacao, Prot_Data_Expiracao,
+                    Prot_Duracao_Minutos, Prot_Observacoes, Prot_IP_Criador,
+                    Prot_Status
+                ) VALUES (?, ?, ?, ?, GETDATE(), ?, ?, ?, ?, 'ATIVA');
+                SELECT SCOPE_IDENTITY() AS ProtectionId;
+            """, (con_codigo, user_name, machine_name, password_hash, 
+                  expiry_time, duration_minutes, notes, ip_address))
+            
+            result = cursor.fetchone()
+            if result and result[0]:
+                protection_id = int(result[0])
+                logging.info(f"[DB] ✅ Proteção criada diretamente: ID={protection_id}")
+                return True, "Proteção de sessão ativada com sucesso", protection_id
+            else:
+                logging.error("[DB] ❌ INSERT direto falhou")
+                return False, "Erro ao criar proteção diretamente", None
+                
+        except Exception as e:
+            logging.error(f"[DB] ❌ Erro no INSERT direto: {e}")
+            return False, f"Erro ao criar proteção: {e}", None
+
+    def _create_protection_table(self, cursor):
+        """Cria a tabela de proteção de sessão se não existir."""
+        try:
+            logging.info("[DB] Criando tabela Sessao_Protecao_WTS...")
+            cursor.execute("""
+                CREATE TABLE [dbo].[Sessao_Protecao_WTS](
+                    [Prot_Id] [int] IDENTITY(1,1) NOT NULL,
+                    [Con_Codigo] [int] NOT NULL,
+                    [Usu_Nome_Protetor] [nvarchar](100) NOT NULL,
+                    [Usu_Maquina_Protetor] [nvarchar](100) NULL,
+                    [Prot_Senha_Hash] [nvarchar](255) NOT NULL,
+                    [Prot_Data_Criacao] [datetime] NOT NULL,
+                    [Prot_Data_Expiracao] [datetime] NOT NULL,
+                    [Prot_Data_Remocao] [datetime] NULL,
+                    [Prot_Duracao_Minutos] [int] NOT NULL,
+                    [Prot_Observacoes] [nvarchar](500) NULL,
+                    [Prot_IP_Criador] [nvarchar](50) NULL,
+                    [Prot_Status] [nvarchar](20) NOT NULL DEFAULT ('ATIVA'),
+                    [Prot_Removida_Por] [nvarchar](100) NULL,
+                    CONSTRAINT [PK_Sessao_Protecao_WTS] PRIMARY KEY CLUSTERED ([Prot_Id] ASC)
+                );
+                
+                CREATE INDEX [IX_Sessao_Protecao_Con_Status] ON [dbo].[Sessao_Protecao_WTS] 
+                    ([Con_Codigo], [Prot_Status]) INCLUDE ([Prot_Data_Expiracao]);
+            """)
+            logging.info("[DB] ✅ Tabela Sessao_Protecao_WTS criada com sucesso")
+        except Exception as e:
+            logging.error(f"[DB] ❌ Erro ao criar tabela: {e}")
+            raise
+
+    def _validate_password_direct(self, cursor, con_codigo, password_hash, 
+                                 requesting_user, requesting_machine, ip_address):
+        """Valida senha diretamente via SELECT se SP não existir."""
+        try:
+            # Busca proteção ativa para a conexão
+            cursor.execute("""
+                SELECT TOP 1 Prot_Id, Usu_Nome_Protetor, Prot_Senha_Hash
+                FROM Sessao_Protecao_WTS
+                WHERE Con_Codigo = ? 
+                  AND Prot_Status = 'ATIVA'
+                  AND Prot_Data_Expiracao > GETDATE()
+                ORDER BY Prot_Data_Criacao DESC
+            """, (con_codigo,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                logging.info(f"[DB] Nenhuma proteção ativa encontrada para conexão {con_codigo}")
+                return {
+                    "valid": False,
+                    "protection_id": None,
+                    "protected_by": None,
+                    "message": "Servidor não está protegido"
+                }
+            
+            prot_id, protected_by, stored_hash = result
+            
+            # Verifica se a senha está correta
+            if password_hash == stored_hash:
+                logging.info(f"[DB] ✅ Senha correta: {requesting_user} → Servidor {con_codigo}")
+                
+                # Registra tentativa bem-sucedida
+                self._log_access_attempt(cursor, prot_id, con_codigo, requesting_user, 
+                                       requesting_machine, ip_address, 'SUCESSO')
+                
+                return {
+                    "valid": True,
+                    "protection_id": prot_id,
+                    "protected_by": protected_by,
+                    "message": "Senha correta - acesso autorizado"
+                }
+            else:
+                logging.warning(f"[DB] ❌ Senha incorreta: {requesting_user} → Servidor {con_codigo}")
+                
+                # Registra tentativa malsucedida
+                self._log_access_attempt(cursor, prot_id, con_codigo, requesting_user, 
+                                       requesting_machine, ip_address, 'SENHA_INCORRETA')
+                
+                return {
+                    "valid": False,
+                    "protection_id": prot_id,
+                    "protected_by": protected_by,
+                    "message": "Senha de proteção incorreta"
+                }
+                
+        except Exception as e:
+            logging.error(f"[DB] ❌ Erro na validação direta: {e}")
+            return {
+                "valid": False,
+                "protection_id": None,
+                "protected_by": None,
+                "message": f"Erro na validação: {e}"
+            }
+
+    def _log_access_attempt(self, session_id: int, user: str, machine_name: str, ip_address: str, 
+                            success: bool, cursor) -> bool:
+        """Registra tentativa de acesso para auditoria."""
+        try:
+            # Tenta usar stored procedure primeiro
+            try:
+                cursor.callproc('sp_Log_Tentativa_Protecao', (
+                    session_id, user, machine_name, ip_address, success
+                ))
+                logging.debug(f"[DB] Tentativa de acesso registrada via stored procedure")
+                return True
+            except Exception as sp_error:
+                logging.warning(f"[DB] Falha na stored procedure de log: {sp_error}")
+                
+                # Fallback: INSERT direto
+                cursor.execute("""
+                    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES 
+                                   WHERE TABLE_NAME = 'Log_Tentativa_Protecao_WTS')
+                    BEGIN
+                        CREATE TABLE Log_Tentativa_Protecao_WTS (
+                            id INT IDENTITY(1,1) PRIMARY KEY,
+                            sessao_id INT NOT NULL,
+                            usuario NVARCHAR(100) NOT NULL,
+                            maquina NVARCHAR(100),
+                            ip_address NVARCHAR(50),
+                            sucesso BIT NOT NULL,
+                            data_tentativa DATETIME2 DEFAULT GETDATE()
+                        )
+                    END
+                """)
+                
+                cursor.execute("""
+                    INSERT INTO Log_Tentativa_Protecao_WTS 
+                    (sessao_id, usuario, maquina, ip_address, sucesso)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (session_id, user, machine_name, ip_address, success))
+                
+                logging.debug(f"[DB] Tentativa de acesso registrada via INSERT direto")
+                return True
+                
+        except Exception as e:
+            logging.error(f"[DB] Erro ao registrar tentativa de acesso: {e}")
+            return False
 
     def create_session_protection(
         self,
@@ -40,12 +224,27 @@ class SessionProtectionRepository(BaseRepository):
 
         try:
             password_hash = self._hash_password(password)
+            logging.info(f"[DB] Criando proteção: con_codigo={con_codigo}, user={user_name}, machine={machine_name}")
             
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 
+                # Verifica se a stored procedure existe
+                cursor.execute("""
+                    SELECT COUNT(*) FROM sys.objects 
+                    WHERE type = 'P' AND name = 'sp_Criar_Protecao_Sessao'
+                """)
+                sp_exists = cursor.fetchone()[0]
+                
+                if sp_exists == 0:
+                    logging.error("[DB] Stored procedure sp_Criar_Protecao_Sessao não encontrada")
+                    # Usa INSERT direto se a SP não existir
+                    return self._create_protection_direct(cursor, con_codigo, user_name, machine_name, 
+                                                        password_hash, duration_minutes, notes, ip_address)
+                
                 # Chama stored procedure para criar proteção
+                logging.info(f"[DB] Executando SP com senha hash: {password_hash[:10]}...")
                 cursor.execute("""
                     DECLARE @Prot_Id INT;
                     EXEC sp_Criar_Protecao_Sessao 
@@ -64,9 +263,10 @@ class SessionProtectionRepository(BaseRepository):
                 result = cursor.fetchone()
                 if result and result[0]:
                     protection_id = result[0]
-                    logging.info(f"Proteção criada: ID={protection_id}, Servidor={con_codigo}, Usuário={user_name}")
+                    logging.info(f"[DB] ✅ Proteção criada: ID={protection_id}, Servidor={con_codigo}, Usuário={user_name}")
                     return True, "Proteção de sessão ativada com sucesso", protection_id
                 else:
+                    logging.error(f"[DB] ❌ SP retornou resultado nulo")
                     return False, "Erro ao criar proteção", None
                     
         except self.driver_module.Error as e:
@@ -101,10 +301,23 @@ class SessionProtectionRepository(BaseRepository):
 
         try:
             password_hash = self._hash_password(password)
+            logging.info(f"[DB] Validando senha para conexão {con_codigo}, usuário {requesting_user}")
             
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
+                
+                # Verifica se a stored procedure existe
+                cursor.execute("""
+                    SELECT COUNT(*) FROM sys.objects 
+                    WHERE type = 'P' AND name = 'sp_Validar_Protecao_Sessao'
+                """)
+                sp_exists = cursor.fetchone()[0]
+                
+                if sp_exists == 0:
+                    logging.info("[DB] SP de validação não encontrada, usando validação direta")
+                    return self._validate_password_direct(cursor, con_codigo, password_hash, 
+                                                        requesting_user, requesting_machine, ip_address)
                 
                 # Chama stored procedure para validar
                 cursor.execute("""
@@ -132,7 +345,7 @@ class SessionProtectionRepository(BaseRepository):
                     protected_by = result[2]
                     
                     if resultado == 'SUCESSO':
-                        logging.info(f"Acesso autorizado: {requesting_user} → Servidor {con_codigo}")
+                        logging.info(f"[DB] ✅ Acesso autorizado: {requesting_user} → Servidor {con_codigo}")
                         return {
                             "valid": True,
                             "protection_id": protection_id,
@@ -140,7 +353,7 @@ class SessionProtectionRepository(BaseRepository):
                             "message": "Senha correta - acesso autorizado"
                         }
                     elif resultado == 'SENHA_INCORRETA':
-                        logging.warning(f"Senha incorreta: {requesting_user} → Servidor {con_codigo}")
+                        logging.warning(f"[DB] ❌ Senha incorreta: {requesting_user} → Servidor {con_codigo}")
                         return {
                             "valid": False,
                             "protection_id": protection_id,

@@ -20,6 +20,9 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
     def __init__(self, parent, connection_data: Dict[str, Any], current_user: str):
         super().__init__(parent)
         
+        #logging.info(f"[SESSION_PROTECTION] Inicializando diálogo de criação de proteção para usuário: {current_user}")
+        #logging.info(f"[SESSION_PROTECTION] Dados da conexão: {connection_data}")
+        
         self.connection_data = connection_data
         self.current_user = current_user
         self.protection_password = None
@@ -27,11 +30,12 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
         
         self._setup_ui()
         self._center_window()
+        #logging.info("[SESSION_PROTECTION] Diálogo de proteção inicializado com sucesso")
         
         # Configurações da janela
         self.title("🔒 Proteger Sessão")
-        self.geometry("480x450")
-        self.resizable(False, False)
+        self.geometry("700x650")  # Aumentando o tamanho para debug
+        self.resizable(True, True)  # Permitindo redimensionar para debug
         self.transient(parent)
         self.grab_set()
         
@@ -41,10 +45,14 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
     def _setup_ui(self):
         """Configura a interface do diálogo."""
         
+        #logging.info("[SESSION_PROTECTION] Iniciando configuração da UI...")
+        
         # Frame principal
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
+        
+        #logging.info("[SESSION_PROTECTION] Frame principal criado e configurado")
         
         # Título
         title_label = ctk.CTkLabel(
@@ -158,17 +166,18 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
         
         self.notes_entry = ctk.CTkTextbox(
             main_frame,
-            height=60,
-            placeholder_text="Ex: Trabalho crítico até 18h, manutenção em andamento..."
+            height=60
         )
         self.notes_entry.grid(row=5, column=0, padx=10, pady=(0, 15), sticky="ew")
         
         # Botões
+        #logging.info("[SESSION_PROTECTION] Criando frame de botões...")
         button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         button_frame.grid(row=6, column=0, pady=10, sticky="ew")
         button_frame.grid_columnconfigure(0, weight=1)
         button_frame.grid_columnconfigure(1, weight=1)
         
+        #logging.info("[SESSION_PROTECTION] Criando botão Cancelar...")
         cancel_button = ctk.CTkButton(
             button_frame,
             text="Cancelar",
@@ -177,7 +186,9 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
             hover_color="gray40"
         )
         cancel_button.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
+        #logging.info("[SESSION_PROTECTION] Botão Cancelar criado e posicionado")
         
+        #logging.info("[SESSION_PROTECTION] Criando botão Ativar Proteção...")
         protect_button = ctk.CTkButton(
             button_frame,
             text="🔒 Ativar Proteção",
@@ -185,6 +196,9 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
             font=("Segoe UI", 12, "bold")
         )
         protect_button.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="ew")
+        #logging.info("[SESSION_PROTECTION] Botão Ativar Proteção criado e posicionado")
+        
+        #logging.info("[SESSION_PROTECTION] Configuração da UI concluída com sucesso!")
 
     def _center_window(self):
         """Centraliza a janela na tela."""
@@ -211,6 +225,8 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
     def _activate_protection(self):
         """Ativa a proteção da sessão."""
         
+        #logging.info("[SESSION_PROTECTION] Método _activate_protection chamado!")
+        
         # Validação da senha
         password = self.password_entry.get().strip()
         if not password or len(password) < 6:
@@ -236,6 +252,16 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
             # Calcula expiração
             expiry_time = datetime.now() + timedelta(minutes=duration_minutes)
             
+            # Obtém informações da máquina para o banco de dados
+            import socket
+            try:
+                machine_name = socket.gethostname()
+                ip_address = socket.gethostbyname(socket.gethostname())
+            except Exception as e:
+                logging.warning(f"Erro ao obter informações da máquina: {e}")
+                machine_name = "unknown"
+                ip_address = None
+            
             # Dados da proteção
             protection_data = {
                 "connection_id": self.connection_data.get('db_id'),
@@ -246,18 +272,24 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
                 "expiry_time": expiry_time.isoformat(),
                 "created_at": datetime.now().isoformat(),
                 "notes": notes,
-                "status": "active"
+                "status": "active",
+                "machine_name": machine_name,
+                "ip_address": ip_address
             }
             
             # Registra a proteção
             self._log_protection_created(protection_data)
             
             # Ativa no gerenciador
-            session_protection_manager.activate_session_protection(
+            success = session_protection_manager.activate_session_protection(
                 self.connection_data.get('db_id'),
                 password,
                 protection_data
             )
+            
+            if not success:
+                messagebox.showerror("Erro", "Falha ao ativar proteção no servidor")
+                return
             
             # Mostra confirmação
             self._show_protection_confirmation(expiry_time, password)
@@ -307,6 +339,7 @@ class CreateSessionProtectionDialog(ctk.CTkToplevel):
 
     def _cancel(self):
         """Cancela a criação da proteção."""
+        #logging.info("[SESSION_PROTECTION] Método _cancel chamado!")
         self.result = {"activated": False}
         self.destroy()
 
@@ -322,19 +355,31 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     Fluxo: Usuário B tenta acessar → Recebe este diálogo → Digita senha do Usuário A
     """
     
-    def __init__(self, parent, connection_data: Dict[str, Any], requesting_user: str, protected_by: str):
+    def __init__(self, parent, connection_data: Dict[str, Any], requesting_user: str, protected_by: str, unlock_mode: bool = False):
         super().__init__(parent)
+        
+        logging.info(f"[SESSION_VALIDATION] Inicializando diálogo de validação para usuário: {requesting_user}")
+        logging.info(f"[SESSION_VALIDATION] Protegido por: {protected_by}")
+        logging.info(f"[SESSION_VALIDATION] Modo liberação: {unlock_mode}")
         
         self.connection_data = connection_data
         self.requesting_user = requesting_user
         self.protected_by = protected_by
+        self.unlock_mode = unlock_mode
         self.result = None
         
+        logging.info("[SESSION_VALIDATION] Chamando _setup_ui()...")
         self._setup_ui()
+        logging.info("[SESSION_VALIDATION] Chamando _center_window()...")
         self._center_window()
+        logging.info("[SESSION_VALIDATION] Inicialização concluída")
         
-        # Configurações da janela
-        self.title("🔒 Sessão Protegida")
+        # Configurações da janela baseadas no modo
+        if self.unlock_mode:
+            self.title("🔓 Liberar Conexão")
+        else:
+            self.title("🔒 Sessão Protegida")
+        
         self.geometry("450x350")
         self.resizable(False, False)
         self.transient(parent)
@@ -346,15 +391,28 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     def _setup_ui(self):
         """Configura a interface do diálogo."""
         
+        logging.info("[SESSION_VALIDATION] Iniciando _setup_ui() da ValidateSessionPasswordDialog...")
+        
+        # Define textos baseados no modo
+        if self.unlock_mode:
+            self.title_text = "🔓 Liberar Conexão"
+            self.warning_text = "🔓 Liberação de Conexão Protegida!\n\nPara remover a proteção desta sessão,\ndigite a senha de proteção."
+            self.button_text = "🔓 Liberar Conexão"
+        else:
+            self.title_text = "🔒 Sessão Protegida"
+            self.warning_text = "🔒 Esta sessão está protegida!\n\nO usuário conectado definiu uma senha de proteção.\nDigite a senha para acessar o servidor."
+            self.button_text = "🔐 Validar e Continuar"
+        
         # Frame principal
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
+        logging.info("[SESSION_VALIDATION] Frame principal criado")
         
         # Título
         title_label = ctk.CTkLabel(
             main_frame,
-            text="🔒 Sessão Protegida",
+            text=self.title_text,
             font=("Segoe UI", 18, "bold")
         )
         title_label.grid(row=0, column=0, pady=(10, 20), sticky="ew")
@@ -386,7 +444,7 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
         
         warning_label = ctk.CTkLabel(
             warning_frame,
-            text="🔒 Esta sessão está protegida!\n\nO usuário conectado definiu uma senha de proteção.\nDigite a senha para acessar o servidor.",
+            text=self.warning_text,
             font=("Segoe UI", 11, "bold"),
             text_color="white",
             wraplength=400
@@ -441,14 +499,17 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
             hover_color="gray40"
         )
         cancel_button.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
+        logging.info("[SESSION_VALIDATION] Botão Cancelar criado e posicionado")
         
         validate_button = ctk.CTkButton(
             button_frame,
-            text="🔓 Validar Senha",
+            text=self.button_text,
             command=self._validate_password,
             font=("Segoe UI", 12, "bold")
         )
         validate_button.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="ew")
+        logging.info("[SESSION_VALIDATION] Botão Validar Senha criado e posicionado")
+        logging.info("[SESSION_VALIDATION] _setup_ui() da ValidateSessionPasswordDialog concluída")
 
     def _center_window(self):
         """Centraliza a janela na tela."""
@@ -462,8 +523,11 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     def _validate_password(self):
         """Valida a senha de proteção."""
         
+        logging.info("[SESSION_VALIDATION] _validate_password() chamado")
+        
         password = self.password_entry.get().strip()
         if not password:
+            logging.warning("[SESSION_VALIDATION] Senha vazia fornecida")
             messagebox.showwarning("Senha Necessária", "Por favor, digite a senha de proteção")
             self.password_entry.focus()
             return
@@ -505,6 +569,7 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
 
     def _cancel(self):
         """Cancela a validação."""
+        logging.info("[SESSION_VALIDATION] _cancel() chamado - cancelando validação")
         self.result = {"validated": False}
         self.destroy()
 
@@ -542,6 +607,9 @@ class SessionProtectionManager:
     def activate_session_protection(self, connection_id: int, password: str, protection_data: Dict[str, Any]):
         """Ativa proteção para uma sessão no servidor."""
         
+        logging.info(f"[SESSION_PROTECTION] Iniciando ativação de proteção para conexão {connection_id}")
+        logging.info(f"[SESSION_PROTECTION] Dados recebidos: {list(protection_data.keys())}")
+        
         # Tenta usar o repositório do servidor
         if self.session_repo:
             try:
@@ -550,6 +618,8 @@ class SessionProtectionManager:
                 duration_minutes = protection_data.get('duration_minutes', 60)
                 notes = protection_data.get('notes', '')
                 ip_address = protection_data.get('ip_address')
+                
+                logging.info(f"[SESSION_PROTECTION] Enviando para servidor: user={user_name}, machine={machine_name}, ip={ip_address}")
                 
                 success, message, protection_id = self.session_repo.create_session_protection(
                     con_codigo=connection_id,
@@ -562,15 +632,17 @@ class SessionProtectionManager:
                 )
                 
                 if success:
-                    logging.info(f"Proteção criada no servidor - ID: {protection_id}, Conexão: {connection_id}")
+                    logging.info(f"[SESSION_PROTECTION] ✅ Proteção criada no servidor - ID: {protection_id}, Conexão: {connection_id}")
                     return True
                 else:
-                    logging.error(f"Falha ao criar proteção no servidor: {message}")
+                    logging.error(f"[SESSION_PROTECTION] ❌ Falha ao criar proteção no servidor: {message}")
                     # Fallback para modo local
                     
             except Exception as e:
-                logging.error(f"Erro ao acessar servidor para criar proteção: {e}")
+                logging.error(f"[SESSION_PROTECTION] ❌ Erro ao acessar servidor para criar proteção: {e}")
                 # Fallback para modo local
+        else:
+            logging.warning(f"[SESSION_PROTECTION] ⚠️ session_repo não disponível, usando modo local")
         
         # Modo local (fallback)
         self.protected_sessions[connection_id] = {
@@ -579,7 +651,7 @@ class SessionProtectionManager:
             "created_at": datetime.now().isoformat()
         }
         
-        logging.info(f"Proteção ativada localmente para conexão {connection_id} por {protection_data.get('protected_by')}")
+        logging.info(f"[SESSION_PROTECTION] 🔧 Proteção ativada localmente para conexão {connection_id} por {protection_data.get('protected_by')}")
         return True
 
     def is_session_protected(self, connection_id: int) -> bool:
