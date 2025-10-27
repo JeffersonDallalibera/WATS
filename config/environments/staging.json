@@ -1,0 +1,58 @@
+{
+  "environment": "staging",
+  "debug": false,
+  "database": {
+    "type": "sqlserver",
+    "host": "${STAGING_DB_HOST}",
+    "port": "${STAGING_DB_PORT}",
+    "database": "${STAGING_DB_NAME}",
+    "username": "${STAGING_DB_USER}",
+    "password": "${STAGING_DB_PASSWORD}",
+    "connection_timeout": 45,
+    "pool_size": 10,
+    "ssl_required": false,
+    "driver": "ODBC Driver 17 for SQL Server",
+    "trust_server_certificate": true
+  },
+  "logging": {
+    "level": "DEBUG",
+    "console_output": true,
+    "file_rotation": true,
+    "structured_logging": true,
+    "max_file_size": "5MB",
+    "backup_count": 5
+  },
+  "recording": {
+    "enabled": true,
+    "output_path": "./recordings/staging",
+    "max_file_size_mb": 100,
+    "fps": 10,
+    "quality": 75,
+    "auto_rotation": true,
+    "retention_days": 30
+  },
+  "api": {
+    "enabled": true,
+    "base_url": "${STAGING_API_URL}",
+    "api_key": "${STAGING_API_KEY}",
+    "timeout": 20,
+    "retry_attempts": 2
+  },
+  "ui": {
+    "theme": "dark",
+    "auto_refresh_interval": 30,
+    "show_debug_info": true
+  },
+  "security": {
+    "session_timeout": 3600,
+    "password_encryption": "bcrypt",
+    "enable_audit_log": true,
+    "failed_login_threshold": 3,
+    "lockout_duration": 180
+  },
+  "performance": {
+    "enable_profiling": true,
+    "cache_size": 500,
+    "async_operations": true
+  }
+}

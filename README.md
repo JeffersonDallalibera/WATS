@@ -11,7 +11,7 @@
 ### Funcionalidades Principais
 
 - **Gerenciamento de Conexões RDP**: Gestão centralizada de conexões de área de trabalho remota
-- **Integração com Banco de Dados**: Suporte para backends PostgreSQL e SQL Server
+- **Integração com Banco de Dados**: Suporte otimizado para SQL Server
 - **Gerenciamento de Usuários**: Painel administrativo para gestão de usuários e conexões
 - **Organização por Grupos**: Organize conexões por grupos para melhor gerenciamento
 
@@ -97,7 +97,7 @@ python run.py
 
 ```env
 # Configurações do Banco de Dados
-DB_TYPE=postgresql          # ou sqlserver
+DB_TYPE=sqlserver           # Tipo do banco (sqlserver ou sqlite)
 DB_SERVER=seu_servidor
 DB_DATABASE=seu_banco_de_dados
 DB_UID=seu_usuario

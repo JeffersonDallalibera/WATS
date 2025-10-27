@@ -1,0 +1,51 @@
+{
+  "environment": "development",
+  "debug": true,
+  "database": {
+    "type": "sqlserver",
+    "host": "localhost",
+    "port": 1433,
+    "database": "WATS_Dev",
+    "username": "sa",
+    "password": "DevPassword123!",
+    "connection_timeout": 30,
+    "pool_size": 5,
+    "driver": "ODBC Driver 17 for SQL Server",
+    "trust_server_certificate": true
+  },
+  "logging": {
+    "level": "DEBUG",
+    "console_output": true,
+    "file_rotation": false,
+    "structured_logging": true
+  },
+  "recording": {
+    "enabled": false,
+    "output_path": "./recordings/dev",
+    "max_file_size_mb": 50,
+    "fps": 5,
+    "quality": 60,
+    "auto_rotation": false
+  },
+  "api": {
+    "enabled": false,
+    "base_url": "http://localhost:8000",
+    "timeout": 10,
+    "retry_attempts": 1
+  },
+  "ui": {
+    "theme": "dark",
+    "auto_refresh_interval": 30,
+    "show_debug_info": true
+  },
+  "security": {
+    "session_timeout": 3600,
+    "password_encryption": "md5",
+    "enable_audit_log": true
+  },
+  "performance": {
+    "enable_profiling": true,
+    "cache_size": 100,
+    "async_operations": false
+  }
+}

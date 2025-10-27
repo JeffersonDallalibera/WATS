@@ -9,9 +9,8 @@ import customtkinter as ctk # Importa customtkinter para o diálogo
 
 # Importa as funções/classes necessárias de config
 # Nota: NÃO importamos 'settings' aqui ainda
-from wats_app.config import setup_logging, load_environment_variables, Settings
+from src.wats.config import setup_logging, load_environment_variables, Settings
 
-# --- [NOVO] Classe para o Diálogo de Consentimento ---
 class ConsentDialog(ctk.CTkToplevel):
     """Diálogo modal para obter consentimento de gravação."""
     def __init__(self, parent):
@@ -73,7 +72,7 @@ class ConsentDialog(ctk.CTkToplevel):
         master = self.master
         master.wait_window(self)
         return self._result
-# --- FIM NOVO ---
+
 
 
 def main():
@@ -163,10 +162,10 @@ def main():
     # 4. Importa e executa o app principal, passando a instância de settings
     try:
         # Importa run_app DEPOIS que tudo foi configurado
-        from wats_app.main import run_app
+        from src.wats.main import run_app
         run_app(settings_instance)
     except ImportError as e:
-        logging.critical(f"Erro ao importar wats_app.main: {e}", exc_info=True)
+        logging.critical(f"Erro ao importar src.wats.main: {e}", exc_info=True)
         messagebox.showerror("Erro de Importação", f"Não foi possível encontrar o módulo principal da aplicação:\n{e}")
         sys.exit(1)
     except Exception as e:

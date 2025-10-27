@@ -1,0 +1,69 @@
+{
+  "environment": "production",
+  "debug": false,
+  "database": {
+    "type": "sqlserver",
+    "host": "${DB_HOST}",
+    "port": "${DB_PORT}",
+    "database": "${DB_NAME}",
+    "username": "${DB_USER}",
+    "password": "${DB_PASSWORD}",
+    "connection_timeout": 60,
+    "pool_size": 20,
+    "ssl_required": false,
+    "driver": "ODBC Driver 17 for SQL Server",
+    "trust_server_certificate": true
+  },
+  "logging": {
+    "level": "INFO",
+    "console_output": false,
+    "file_rotation": true,
+    "structured_logging": true,
+    "max_file_size": "10MB",
+    "backup_count": 10
+  },
+  "recording": {
+    "enabled": true,
+    "output_path": "${RECORDING_PATH}",
+    "max_file_size_mb": 200,
+    "fps": 15,
+    "quality": 85,
+    "auto_rotation": true,
+    "retention_days": 90
+  },
+  "api": {
+    "enabled": true,
+    "base_url": "${API_BASE_URL}",
+    "api_key": "${API_KEY}",
+    "timeout": 30,
+    "retry_attempts": 3,
+    "rate_limit": 100
+  },
+  "ui": {
+    "theme": "system",
+    "auto_refresh_interval": 60,
+    "show_debug_info": false
+  },
+  "security": {
+    "session_timeout": 7200,
+    "password_encryption": "bcrypt",
+    "enable_audit_log": true,
+    "failed_login_threshold": 5,
+    "lockout_duration": 300
+  },
+  "performance": {
+    "enable_profiling": false,
+    "cache_size": 1000,
+    "async_operations": true,
+    "connection_pooling": true
+  },
+  "monitoring": {
+    "health_check_interval": 60,
+    "metrics_collection": true,
+    "alert_thresholds": {
+      "cpu_usage": 80,
+      "memory_usage": 85,
+      "disk_usage": 90
+    }
+  }
+}

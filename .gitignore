@@ -1,5 +1,10 @@
 # WATS Project .gitignore
 
+# Configurações específicas (manter exemplos)
+config/.env
+config/environments/local.json
+wats_settings.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -83,9 +88,9 @@ recordings/
 build_executable.spec.bak
 
 # Test files
-test_*.py
-*_test.py
-tests/
+#test_*.py
+#*_test.py
+#tests/
 
 # Coverage reports
 htmlcov/
@@ -120,3 +125,7 @@ venv.bak/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+
+#mp4
+*.mp4

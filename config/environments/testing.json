@@ -1,0 +1,45 @@
+{
+  "environment": "testing",
+  "debug": false,
+  "database": {
+    "type": "sqlite",
+    "database": ":memory:",
+    "connection_timeout": 15,
+    "pool_size": 2
+  },
+  "logging": {
+    "level": "INFO",
+    "console_output": false,
+    "file_rotation": false,
+    "structured_logging": true
+  },
+  "recording": {
+    "enabled": false,
+    "output_path": "./test_recordings",
+    "max_file_size_mb": 10,
+    "fps": 1,
+    "quality": 30,
+    "auto_rotation": false
+  },
+  "api": {
+    "enabled": false,
+    "base_url": "http://localhost:8080",
+    "timeout": 5,
+    "retry_attempts": 1
+  },
+  "ui": {
+    "theme": "light",
+    "auto_refresh_interval": 10,
+    "show_debug_info": false
+  },
+  "security": {
+    "session_timeout": 900,
+    "password_encryption": "md5",
+    "enable_audit_log": false
+  },
+  "performance": {
+    "enable_profiling": false,
+    "cache_size": 10,
+    "async_operations": false
+  }
+}

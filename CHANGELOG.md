@@ -81,7 +81,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/spec/v2.0.
 ### Adicionado
 
 - Gerenciamento central de conexões RDP
-- Integração com banco de dados (PostgreSQL e SQL Server)
+- Integração otimizada com banco de dados SQL Server
 - Gerenciamento de usuários com painel administrativo
 - Organização de conexões baseada em grupos
 - UI moderna baseada em CustomTkinter

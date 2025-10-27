@@ -1,0 +1,50 @@
+{
+  "description": "Configuração base compartilhada entre todos os ambientes WATS",
+  "application": {
+    "name": "WATS",
+    "version": "4.2",
+    "description": "Windows Terminal Server Connection Manager"
+  },
+  "database": {
+    "type": "sqlserver",
+    "port": 1433,
+    "connection_timeout": 30,
+    "pool_size": 10,
+    "driver": "ODBC Driver 17 for SQL Server",
+    "trust_server_certificate": true,
+    "mars_connection": true,
+    "encrypt": false
+  },
+  "ui": {
+    "themes": ["system", "light", "dark"],
+    "default_theme": "system",
+    "window": {
+      "min_width": 800,
+      "min_height": 600,
+      "resizable": true
+    }
+  },
+  "logging": {
+    "format": "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s",
+    "date_format": "%Y-%m-%d %H:%M:%S",
+    "max_file_size": "10MB",
+    "backup_count": 5
+  },
+  "security": {
+    "session_timeout": 3600,
+    "password_encryption": "md5",
+    "enable_audit_log": true,
+    "max_login_attempts": 5
+  },
+  "performance": {
+    "cache_size": 500,
+    "async_operations": false,
+    "connection_pooling": true
+  },
+  "recording": {
+    "formats": ["mp4", "avi"],
+    "default_format": "mp4",
+    "compression": "h264",
+    "auto_cleanup": true
+  }
+}

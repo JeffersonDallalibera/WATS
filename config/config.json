@@ -1,0 +1,40 @@
+{
+  "database": {
+    "type": "sqlserver",
+    "server": "",
+    "database": "",
+    "username": "",
+    "password": "",
+    "port": "1433"
+  },
+  "recording": {
+    "enabled": false,
+    "auto_start": true,
+    "mode": "rdp_window",
+    "output_dir": "C:\\Users\\JEFFER~1\\AppData\\Local\\Temp\\tmpd1lfaf3k\\custom_recordings",
+    "fps": 10,
+    "quality": 23,
+    "resolution_scale": 1.0,
+    "max_file_size_mb": 100,
+    "max_duration_minutes": 30,
+    "max_total_size_gb": 10.0,
+    "max_file_age_days": 30,
+    "cleanup_interval_hours": 6
+  },
+  "api": {
+    "enabled": false,
+    "base_url": "",
+    "api_token": "",
+    "auto_upload": false,
+    "upload_timeout": 60,
+    "max_retries": 3,
+    "max_concurrent_uploads": 2,
+    "delete_after_upload": false,
+    "upload_older_recordings": true,
+    "max_file_age_days": 30
+  },
+  "application": {
+    "log_level": "INFO",
+    "theme": "Dark"
+  }
+}

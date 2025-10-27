@@ -1,11 +1,18 @@
-customtkinter
-pyodbc
-python-dotenv
-psycopg2-binary
-# Recording dependencies
-opencv-python
-mss
-numpy
-# Windows-specific dependencies for window detection
-pywin32
-psutil
+﻿customtkinter>=5.0.0
+pyodbc>=4.0.0
+psycopg2-binary>=2.9.0
+opencv-python>=4.5.0
+pywin32>=306
+pydantic>=2.0.0
+python-dotenv>=0.19.0
+mss>=10.0.0
+psutil>=7.0.0
+requests>=2.25.0
+urllib3>=1.26.0
+charset-normalizer>=2.0.0
+idna>=3.0
+certifi>=2021.0.0
+PyInstaller>=5.0.0
+altgraph>=0.17.0
+pyinstaller-hooks-contrib>=2023.0
+pefile>=2023.0.0
