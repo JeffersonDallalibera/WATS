@@ -1,0 +1,228 @@
+===============================================================================
+WATS - INSTALAÇÃO NO AMBIENTE CORPORATIVO
+===============================================================================
+Data: 27/10/2025
+Versão: 1.0
+Repositório: https://github.com/JeffersonDallalibera/WATS.git
+
+===============================================================================
+🚀 PASSO A PASSO PARA INSTALAÇÃO NA EMPRESA
+===============================================================================
+
+PRÉ-REQUISITOS:
+- Python 3.8+ instalado
+- Git configurado e acessível
+- Acesso ao SQL Server
+- PowerShell com permissões adequadas
+
+===============================================================================
+1. CLONAR REPOSITÓRIO
+===============================================================================
+
+# Navegar para pasta desejada (ex: C:\)
+cd C:\
+
+# Clonar o repositório WATS
+git clone https://github.com/JeffersonDallalibera/WATS.git
+
+# Entrar na pasta do projeto
+cd WATS
+
+===============================================================================
+2. CONFIGURAR AMBIENTE PYTHON
+===============================================================================
+
+# Criar ambiente virtual
+python -m venv venv
+
+# Ativar ambiente virtual
+.\venv\Scripts\Activate.ps1
+
+# Se der erro de política de execução, usar:
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# Atualizar pip
+python -m pip install --upgrade pip
+
+===============================================================================
+3. INSTALAR DEPENDÊNCIAS
+===============================================================================
+
+# Instalar todas as dependências do projeto
+pip install -r requirements.txt
+
+# Se houver problemas de proxy corporativo, usar:
+pip install --proxy http://proxy.empresa.com:8080 -r requirements.txt
+
+# Se houver problemas de SSL, usar:
+pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org -r requirements.txt
+
+# Verificar se tudo foi instalado corretamente
+pip list
+
+===============================================================================
+4. CONFIGURAR O SISTEMA
+===============================================================================
+
+# Copiar arquivo de configuração modelo
+copy config\.env.example .env
+
+# Editar configurações (substituir pelos dados da empresa)
+notepad .env
+
+CONFIGURAÇÕES NECESSÁRIAS NO .env:
+------------------------------------
+DB_SERVER=servidor-sql-da-empresa
+DB_DATABASE=WATS_DB
+DB_USERNAME=seu-usuario-sql
+DB_PASSWORD=sua-senha-sql
+DB_DRIVER=ODBC Driver 17 for SQL Server
+
+RECORDING_PATH=C:\WATS\Recordings
+MAX_RECORDING_SIZE_GB=10
+CLEANUP_OLDER_THAN_DAYS=30
+
+API_ENDPOINT=https://api-da-empresa.com/upload
+API_KEY=chave-api-se-necessario
+
+===============================================================================
+5. EXECUTAR O WATS
+===============================================================================
+
+# Com o ambiente virtual ativado, executar:
+python run.py
+
+# O sistema deve abrir a interface gráfica do WATS
+
+===============================================================================
+📋 COMANDOS RÁPIDOS PARA USO DIÁRIO
+===============================================================================
+
+INICIAR WATS:
+cd C:\WATS
+.\venv\Scripts\Activate.ps1
+python run.py
+
+ATUALIZAR PARA NOVA VERSÃO:
+cd C:\WATS
+git pull origin master
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt --upgrade
+
+VERIFICAR STATUS:
+cd C:\WATS
+.\venv\Scripts\Activate.ps1
+python -c "import src.wats.config; print('WATS OK!')"
+
+===============================================================================
+🛠️ SCRIPT DE INSTALAÇÃO AUTOMATIZADA
+===============================================================================
+
+Criar arquivo: install_wats_empresa.ps1
+
+# === INÍCIO DO SCRIPT ===
+Write-Host "=== Instalando WATS no ambiente corporativo ===" -ForegroundColor Green
+
+# Verificar Python
+if (!(Get-Command python -ErrorAction SilentlyContinue)) {
+    Write-Host "ERRO: Python não encontrado!" -ForegroundColor Red
+    exit 1
+}
+
+# Clonar repositório
+Write-Host "Clonando repositório..." -ForegroundColor Yellow
+git clone https://github.com/JeffersonDallalibera/WATS.git
+cd WATS
+
+# Criar ambiente virtual
+Write-Host "Criando ambiente virtual..." -ForegroundColor Yellow
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# Instalar dependências
+Write-Host "Instalando dependências..." -ForegroundColor Yellow
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# Configurar .env
+Write-Host "Configurando ambiente..." -ForegroundColor Yellow
+if (!(Test-Path ".env")) {
+    copy config\.env.example .env
+    Write-Host "Configure o arquivo .env!" -ForegroundColor Cyan
+}
+
+Write-Host "=== Instalação concluída! ===" -ForegroundColor Green
+Write-Host "Execute: python run.py" -ForegroundColor Cyan
+# === FIM DO SCRIPT ===
+
+===============================================================================
+🚨 SOLUÇÃO DE PROBLEMAS COMUNS
+===============================================================================
+
+ERRO: "cannot be loaded because running scripts is disabled"
+SOLUÇÃO: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+ERRO: SSL certificate verify failed
+SOLUÇÃO: Usar --trusted-host nos comandos pip
+
+ERRO: Proxy blocking downloads
+SOLUÇÃO: Configurar proxy no pip ou usar rede sem proxy
+
+ERRO: "Module not found"
+SOLUÇÃO: Verificar se ambiente virtual está ativado (.\venv\Scripts\Activate.ps1)
+
+ERRO: Database connection failed
+SOLUÇÃO: Verificar configurações no arquivo .env
+
+ERRO: Permission denied
+SOLUÇÃO: Executar PowerShell como Administrador
+
+===============================================================================
+✅ VANTAGENS DESTA INSTALAÇÃO
+===============================================================================
+
+🔹 Sem conflitos com antivírus (código fonte)
+🔹 Sempre atualizado via Git
+🔹 Configuração flexível via .env
+🔹 Logs detalhados para debug
+🔹 Fácil manutenção e atualizações
+🔹 Acesso a todos os recursos do WATS
+
+===============================================================================
+📞 SUPORTE
+===============================================================================
+
+Em caso de problemas:
+1. Verificar logs em wats_app.log
+2. Testar conexão de rede
+3. Validar configurações do .env
+4. Verificar permissões de pasta
+
+Desenvolvedor: Jefferson Dallalibera
+Email: jefferson@empresa.com
+Repositório: https://github.com/JeffersonDallalibera/WATS
+
+===============================================================================
+🎯 CHECKLIST FINAL
+===============================================================================
+
+☐ Python 3.8+ instalado
+☐ Git configurado
+☐ Repositório clonado
+☐ Ambiente virtual criado
+☐ Dependências instaladas
+☐ Arquivo .env configurado
+☐ Conexão SQL testada
+☐ WATS executando (python run.py)
+☐ Interface gráfica funcionando
+
+===============================================================================
+
+OBSERVAÇÕES IMPORTANTES:
+- Manter ambiente virtual sempre ativado ao usar WATS
+- Fazer backup das configurações .env
+- Atualizar regularmente via git pull
+- Monitorar logs para troubleshooting
+- Executar como Admin se necessário
+
+===============================================================================
