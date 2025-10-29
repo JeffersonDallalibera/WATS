@@ -4,36 +4,67 @@ import customtkinter as ctk
 from typing import List, Tuple, Callable, Optional, Any
 from tkinter import ttk
 
+# Constante para o URL base da wiki
+WIKI_BASE_URL = "https://sites.google.com/atslogistica.com/wikiats/clientes/"
+
 def parse_particularities(particularidade_str: str) -> List[Tuple[str, str]]:
     """
     Parse o campo de particularidades com múltiplos clientes.
     
+    Formato esperado: 
+    - Com wiki: "Nome1-chave_wiki1|Nome2-chave_wiki2"
+    - Sem wiki: "Nome1;Nome2" 
+    
     Args:
-        particularidade_str: String com formato "Nome1-URL1|Nome2-URL2"
+        particularidade_str: String com formato "Nome1-chave1|Nome2-chave2" ou "Nome1;Nome2"
         
     Returns:
-        Lista de tuplas (nome_cliente, url_cliente)
+        Lista de tuplas (nome_cliente, url_cliente_completa_ou_vazia)
         
     Examples:
-        >>> parse_particularities("Wiki-http://wiki.com|App-http://app.com")
-        [('Wiki', 'http://wiki.com'), ('App', 'http://app.com')]
+        >>> parse_particularities("Cliente A-clientea|Cliente B-clienteb")
+        [('Cliente A', 'https://sites.google.com/atslogistica.com/wikiats/clientes/clientea'), 
+         ('Cliente B', 'https://sites.google.com/atslogistica.com/wikiats/clientes/clienteb')]
+        >>> parse_particularities("Cliente A;Cliente B")
+        [('Cliente A', ''), ('Cliente B', '')]
     """
     if not particularidade_str or particularidade_str.strip() == '':
         return []
         
     #logging.info(f"Parsing particularidades: '{particularidade_str}'")
     clients = []
-    client_entries = particularidade_str.split('|')
     
-    for idx, entry in enumerate(client_entries, 1):
-        entry = entry.strip()
-        if '-' in entry:
-            parts = entry.split('-', 1)
-            if len(parts) == 2 and parts[0].strip() and parts[1].strip():
-                clients.append((parts[0].strip(), parts[1].strip()))
-        elif entry.startswith('http://') or entry.startswith('https://'):
-            client_name = f"Cliente {idx}" if len(client_entries) > 1 else "Wiki"
-            clients.append((client_name, entry))
+    # Primeiro verifica se é formato sem wiki (separado por ;)
+    if ';' in particularidade_str and '-' not in particularidade_str:
+        # Formato sem wiki: "Nome1;Nome2"
+        client_entries = particularidade_str.split(';')
+        for entry in client_entries:
+            entry = entry.strip()
+            if entry:
+                clients.append((entry, ''))  # Nome sem URL
+    else:
+        # Formato com wiki: "Nome1-chave1|Nome2-chave2"
+        client_entries = particularidade_str.split('|')
+        
+        for idx, entry in enumerate(client_entries, 1):
+            entry = entry.strip()
+            
+            if '-' in entry:
+                parts = entry.split('-', 1)
+                if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+                    nome_cliente = parts[0].strip()
+                    chave_wiki = parts[1].strip()
+                    # Constrói URL completa com base fixa
+                    url_completa = f"{WIKI_BASE_URL}{chave_wiki}"
+                    clients.append((nome_cliente, url_completa))
+                else:
+                    # Se não tem chave válida, adiciona sem URL
+                    nome_cliente = parts[0].strip() if parts[0].strip() else f"Cliente {idx}"
+                    clients.append((nome_cliente, ''))
+            else:
+                # Entry sem '-', adiciona como nome sem URL
+                if entry:
+                    clients.append((entry, ''))
     
     #logging.info(f"Total de clientes parseados: {len(clients)}")
     return clients
@@ -394,6 +425,10 @@ class FilterableTreeFrame(ctk.CTkFrame):
     def bind_selection(self, callback: Callable):
         """Vincula callback para seleção de itens."""
         self.tree.bind('<<TreeviewSelect>>', callback)
+    
+    def clear_selection(self):
+        """Limpa a seleção atual do TreeView."""
+        self.tree.selection_remove(self.tree.selection())
     
     def refresh_theme(self):
         """Atualiza o tema do TreeView."""

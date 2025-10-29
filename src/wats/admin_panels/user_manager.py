@@ -57,11 +57,28 @@ class ManageUserDialog(ctk.CTkToplevel):
         # Frame de Permissões de Grupo
         group_frame = ctk.CTkFrame(frame_right)
         group_frame.grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
-        group_frame.grid_columnconfigure(0, weight=1); group_frame.grid_rowconfigure(1, weight=1)
+        group_frame.grid_columnconfigure(0, weight=1); group_frame.grid_rowconfigure(2, weight=1)
         self.lbl_groups = ctk.CTkLabel(group_frame, text="Permissões de Grupo (se não for Admin):", font=("Segoe UI", 12, "bold"))
         self.lbl_groups.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        
+        # Frame para botões de seleção
+        btn_selection_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
+        btn_selection_frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        btn_selection_frame.grid_columnconfigure(0, weight=1)
+        btn_selection_frame.grid_columnconfigure(1, weight=1)
+        
+        self.btn_select_all = ctk.CTkButton(btn_selection_frame, text="Selecionar Todos", 
+                                           height=28, command=self._select_all_groups,
+                                           fg_color="green", hover_color="darkgreen")
+        self.btn_select_all.grid(row=0, column=0, padx=5, sticky="ew")
+        
+        self.btn_deselect_all = ctk.CTkButton(btn_selection_frame, text="Desmarcar Todos", 
+                                             height=28, command=self._deselect_all_groups,
+                                             fg_color="red", hover_color="darkred")
+        self.btn_deselect_all.grid(row=0, column=1, padx=5, sticky="ew")
+        
         self.group_scroll_frame = ctk.CTkScrollableFrame(group_frame, fg_color="transparent")
-        self.group_scroll_frame.grid(row=1, column=0, sticky="nsew")
+        self.group_scroll_frame.grid(row=2, column=0, sticky="nsew")
         self.group_checkboxes: Dict[int, ctk.CTkCheckBox] = {}
 
         # Botões de Ação
@@ -221,5 +238,15 @@ class ManageUserDialog(ctk.CTkToplevel):
                     # Mantém dados no form
                 else: messagebox.showerror("Erro ao Atualizar", message)
             except Exception as e: logging.error(f"Erro inesperado ao atualizar usuário: {e}"); messagebox.showerror("Erro Crítico", f"Ocorreu um erro inesperado:\n{e}")
+
+    def _select_all_groups(self):
+        """Seleciona todos os checkboxes de grupos."""
+        for check in self.group_checkboxes.values():
+            check.select()
+    
+    def _deselect_all_groups(self):
+        """Desmarca todos os checkboxes de grupos."""
+        for check in self.group_checkboxes.values():
+            check.deselect()
 
     # Não há função _delete_user neste painel (apenas inativar via checkbox 'Ativo')

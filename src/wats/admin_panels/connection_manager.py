@@ -7,6 +7,9 @@ from typing import List, Optional, Tuple, Dict, Any
 from ..db.db_service import DBService
 from ..utils import create_connection_filter_frame
 
+# Constante para o URL base da wiki
+WIKI_BASE_URL = "https://sites.google.com/atslogistica.com/wikiats/clientes/"
+
 class ManageConnectionDialog(ctk.CTkToplevel):
     """
     Janela para Criar, Editar e Deletar Conexões (Bases), usando Treeview para a lista.
@@ -59,7 +62,7 @@ class ManageConnectionDialog(ctk.CTkToplevel):
             ("Nome da Conexão:", "entry_con_nome", 1), ("Grupo:", "option_menu_group", 2),
             ("Tipo:", "option_menu_tipo", 3), ("IP / Host / ID:", "entry_con_ip", 4),
             ("Usuário RDP/Acesso:", "entry_con_usuario", 5), ("Senha RDP/Acesso:", "entry_con_senha", 6),
-            ("Link Wiki/Particularidade:", "entry_con_particularidade", 7),
+            ("Particularidades (Nome-chave|Nome2-chave2):", "entry_con_particularidade", 7),
             ("Cliente (Nome Fantasia):", "entry_con_cliente", 8), ("Extra (Opcional):", "entry_extra", 9)
         ]
         self.group_var = ctk.StringVar(value="Selecione...")
@@ -73,6 +76,35 @@ class ManageConnectionDialog(ctk.CTkToplevel):
             elif widget_name == "option_menu_tipo":
                 self.option_menu_tipo = ctk.CTkOptionMenu(frame_right, variable=self.conn_type_var, values=self.connection_types)
                 self.option_menu_tipo.grid(row=row_num, column=1, padx=10, pady=5, sticky="ew")
+            elif widget_name == "entry_con_particularidade":
+                # Frame para o campo de particularidade com botão de gerar link
+                particularidade_frame = ctk.CTkFrame(frame_right, fg_color="transparent")
+                particularidade_frame.grid(row=row_num, column=1, padx=10, pady=5, sticky="ew")
+                particularidade_frame.grid_columnconfigure(0, weight=1)
+                
+                entry = ctk.CTkEntry(particularidade_frame)
+                entry.grid(row=0, column=0, sticky="ew")
+                setattr(self, widget_name, entry)
+                
+                # Botão para gerar link da wiki
+                btn_gerar_wiki = ctk.CTkButton(
+                    particularidade_frame, 
+                    text="🔗 Gerar Link Wiki",
+                    width=120,
+                    height=32,
+                    command=self._gerar_link_wiki
+                )
+                btn_gerar_wiki.grid(row=0, column=1, padx=(5, 0), sticky="e")
+                
+                # Botão de ajuda para formato
+                btn_ajuda = ctk.CTkButton(
+                    particularidade_frame,
+                    text="❓",
+                    width=30,
+                    height=32,
+                    command=self._mostrar_ajuda_formato
+                )
+                btn_ajuda.grid(row=0, column=2, padx=(5, 0), sticky="e")
             else:
                 entry = ctk.CTkEntry(frame_right)
                 entry.grid(row=row_num, column=1, padx=10, pady=5, sticky="ew")
@@ -94,6 +126,123 @@ class ManageConnectionDialog(ctk.CTkToplevel):
 
         self.transient(parent)
         self.grab_set()
+
+    def _gerar_link_wiki(self):
+        """Gera o link da wiki automaticamente baseado na chave do cliente."""
+        cliente = self.entry_con_cliente.get().strip()
+        
+        if not cliente:
+            messagebox.showwarning("Campo Obrigatório", "Por favor, preencha o campo 'Cliente (Nome Fantasia)' antes de gerar o link da wiki.")
+            return
+        
+        # Remove espaços e caracteres especiais para criar uma chave válida para URL
+        # Mantém apenas letras, números e converte para minúsculas
+        import re
+        chave_cliente = re.sub(r'[^a-zA-Z0-9]', '', cliente.lower())
+        
+        if not chave_cliente:
+            messagebox.showwarning("Nome Inválido", "O nome do cliente deve conter pelo menos uma letra ou número.")
+            return
+        
+        # Gera o link no formato simplificado: "Nome_Cliente-chave_wiki"
+        # O usuário não vê o URL base, apenas a parte final
+        link_simplificado = f"{cliente}-{chave_cliente}"
+        
+        # Preenche o campo de particularidade
+        self.entry_con_particularidade.delete(0, "end")
+        self.entry_con_particularidade.insert(0, link_simplificado)
+        
+        messagebox.showinfo(
+            "Link Gerado", 
+            f"Link da wiki gerado com sucesso!\n\n"
+            f"Formato no campo: {cliente}-{chave_cliente}\n"
+            f"URL completa: {WIKI_BASE_URL}{chave_cliente}\n\n"
+            f"💡 Dica: Para múltiplos clientes use '|' como separador:\n"
+            f"Cliente1-chave1|Cliente2-chave2\n\n"
+            f"Para clientes sem wiki use ';':\n"
+            f"Cliente1;Cliente2"
+        )
+
+    def _mostrar_ajuda_formato(self):
+        """Mostra ajuda sobre o formato do campo de particularidades."""
+        ajuda_text = """FORMATO DO CAMPO PARTICULARIDADES
+
+📋 OPÇÕES DISPONÍVEIS:
+
+1️⃣ COM WIKI (usando hífen '-'):
+   • Um cliente: Nome-chave
+   • Múltiplos: Nome1-chave1|Nome2-chave2
+   
+   Exemplo: 
+   Empresa ABC-empresaabc|XYZ Corp-xyzcorp
+
+2️⃣ SEM WIKI (usando ponto e vírgula ';'):
+   • Um cliente: Nome
+   • Múltiplos: Nome1;Nome2;Nome3
+   
+   Exemplo:
+   Empresa ABC;XYZ Corp;Outra Empresa
+
+3️⃣ GERAÇÃO AUTOMÁTICA:
+   • Preencha "Cliente (Nome Fantasia)"
+   • Clique em "🔗 Gerar Link Wiki"
+   • Sistema cria automaticamente no formato Nome-chave
+
+🌐 URL BASE FIXA (oculta do usuário):
+   https://sites.google.com/atslogistica.com/wikiats/clientes/
+
+📝 IMPORTANTE:
+   • Para links de wiki, SEMPRE use hífen '-'
+   • Para múltiplos clientes com wiki, use pipe '|'
+   • Para clientes sem wiki, use ponto e vírgula ';'
+   • Não misture formatos diferentes no mesmo campo"""
+        
+        messagebox.showinfo("Ajuda - Formato de Particularidades", ajuda_text)
+
+    def _validar_formato_particularidades(self, particularidade_str: str) -> Tuple[bool, str]:
+        """
+        Valida o formato do campo de particularidades.
+        
+        Formatos válidos:
+        - Com wiki: "Nome1-chave1|Nome2-chave2"
+        - Sem wiki: "Nome1;Nome2"
+        
+        Returns:
+            Tuple[bool, str]: (é_válido, mensagem_erro)
+        """
+        if not particularidade_str or particularidade_str.strip() == '':
+            return True, ""  # Campo opcional
+            
+        particularidade_str = particularidade_str.strip()
+        
+        # Verifica se é formato sem wiki (só com ;)
+        if ';' in particularidade_str and '-' not in particularidade_str:
+            # Formato sem wiki é sempre válido se tem conteúdo
+            partes = particularidade_str.split(';')
+            for parte in partes:
+                if not parte.strip():
+                    return False, "Formato inválido: nomes vazios não são permitidos.\nFormato sem wiki: 'Nome1;Nome2'"
+            return True, ""
+        
+        # Verifica formato com wiki
+        if '|' in particularidade_str or '-' in particularidade_str:
+            entradas = particularidade_str.split('|')
+            for entrada in entradas:
+                entrada = entrada.strip()
+                if not entrada:
+                    return False, "Formato inválido: entradas vazias não são permitidas."
+                    
+                if '-' not in entrada:
+                    return False, f"Formato inválido: '{entrada}' deve conter '-' para separar nome da chave da wiki.\nFormato correto: 'Nome-chave'"
+                    
+                partes = entrada.split('-', 1)
+                if len(partes) != 2 or not partes[0].strip() or not partes[1].strip():
+                    return False, f"Formato inválido: '{entrada}' deve ter nome e chave separados por '-'.\nFormato correto: 'Nome-chave'"
+            
+            return True, ""
+        
+        # Se chegou até aqui, é texto simples sem separadores especiais
+        return True, ""
 
     def _load_groups_for_dropdown(self):
         """Busca os grupos e popula o OptionMenu."""
@@ -151,15 +300,24 @@ class ManageConnectionDialog(ctk.CTkToplevel):
         # Remove seleção do FilterableTreeFrame
         self.connection_filter_frame.clear_selection()
 
-    def _on_connection_select(self, selected_item):
+    def _on_connection_select(self, event):
         """Chamado quando uma conexão é selecionada no FilterableTreeFrame."""
-        if not selected_item:
+        # Obter item selecionado do TreeView
+        selection = self.connection_filter_frame.tree.selection()
+        if not selection:
             self.selected_connection_id = None
             self.btn_delete_conn.configure(state="disabled")
             logging.debug("Nenhuma conexão selecionada.")
             return
 
         try:
+            # Obter os valores do item selecionado
+            selected_item = self.connection_filter_frame.tree.item(selection[0])['values']
+            if not selected_item:
+                self.selected_connection_id = None
+                self.btn_delete_conn.configure(state="disabled")
+                return
+                
             # selected_item é uma tupla (id, nome, host, porta)
             connection_id_db = int(selected_item[0])
             self.selected_connection_id = connection_id_db # Define ID para modo "update"
@@ -167,17 +325,16 @@ class ManageConnectionDialog(ctk.CTkToplevel):
             logging.info(f"ID da conexão (do DB) selecionada: {self.selected_connection_id}")
             self._load_connection_data_to_form() # Carrega dados
         except (ValueError, IndexError, TypeError) as e:
-            logging.error(f"Erro ao obter ID da conexão selecionada: {e}. Item: {selected_item}")
+            logging.error(f"Erro ao obter ID da conexão selecionada: {e}. Item: {selected_item if 'selected_item' in locals() else 'N/A'}")
             self.selected_connection_id = None # Volta para modo "criar"
             self.btn_delete_conn.configure(state="disabled")
             messagebox.showerror("Erro Interno", "Não foi possível identificar a conexão selecionada.")
             self._load_connection_data_to_form() # Carrega dados no formulário
             # Botão delete é habilitado dentro de _load_connection_data_to_form
-        except (ValueError, IndexError, TypeError) as e:
-            logging.error(f"Erro ao obter ID da conexão selecionada: {e}. Item: {selected_item}")
+        except Exception as e:
+            logging.error(f"Erro inesperado ao processar seleção: {e}")
             self.selected_connection_id = None # Volta para o modo "criar" em caso de erro
             self.btn_delete_conn.configure(state="disabled")
-            messagebox.showerror("Erro Interno", "Não foi possível identificar a conexão selecionada.")
 
 
     def _load_connection_data_to_form(self):
@@ -222,12 +379,21 @@ class ManageConnectionDialog(ctk.CTkToplevel):
     def _save_connection(self):
         """Salva as alterações (Criação ou Edição)."""
         # Coleta os dados do formulário
+        particularidade = self.entry_con_particularidade.get().strip() or None
+        
+        # Valida o formato das particularidades
+        if particularidade:
+            valido, erro = self._validar_formato_particularidades(particularidade)
+            if not valido:
+                messagebox.showwarning("Formato Inválido", erro)
+                return
+        
         data = {
             "con_nome": self.entry_con_nome.get().strip() or None,
             "con_ip": self.entry_con_ip.get().strip() or None,
             "con_usuario": self.entry_con_usuario.get().strip() or None,
             "con_senha": self.entry_con_senha.get().strip() or None,
-            "con_particularidade": self.entry_con_particularidade.get().strip() or None,
+            "con_particularidade": particularidade,
             "con_cliente": self.entry_con_cliente.get().strip() or None,
             "extra": self.entry_extra.get().strip() or None,
             "gru_codigo": self.group_map.get(self.group_var.get()), # Pega o ID do grupo pelo nome no dropdown

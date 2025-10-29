@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from .session_recorder import SessionRecorder
 from .file_rotation_manager import FileRotationManager
+from .smart_session_recorder import SmartSessionRecorder
 
 # Import API components if available
 try:
@@ -22,8 +23,8 @@ except ImportError:
 class RecordingManager:
     """
     Central manager for session recording in WATS application.
-    Coordinates between SessionRecorder, FileRotationManager, and API upload.
-    Provides high-level interface for the main application.
+    Coordinates between SmartSessionRecorder, FileRotationManager, and API upload.
+    Provides high-level interface for the main application with intelligent recording features.
     """
     
     def __init__(self, settings):
@@ -34,7 +35,7 @@ class RecordingManager:
             settings: Application settings instance
         """
         self.settings = settings
-        self.recorder: Optional[SessionRecorder] = None
+        self.smart_recorder: Optional[SmartSessionRecorder] = None
         self.rotation_manager: Optional[FileRotationManager] = None
         self.api_manager = None  # Optional[ApiIntegrationManager]
         
@@ -46,12 +47,14 @@ class RecordingManager:
         # Callbacks
         self.on_recording_started: Optional[Callable[[str], None]] = None
         self.on_recording_stopped: Optional[Callable[[str], None]] = None
+        self.on_recording_paused: Optional[Callable[[str], None]] = None
+        self.on_recording_resumed: Optional[Callable[[str], None]] = None
         self.on_recording_error: Optional[Callable[[str, str], None]] = None
         self.on_upload_started: Optional[Callable[[str, str], None]] = None  # (task_id, filename)
         self.on_upload_completed: Optional[Callable[[str], None]] = None  # (task_id)
         self.on_upload_failed: Optional[Callable[[str, str], None]] = None  # (task_id, error)
         
-        logging.info("RecordingManager initialized")
+        logging.info("RecordingManager initialized with smart recording capabilities")
 
     def initialize(self) -> bool:
         """
@@ -70,16 +73,8 @@ class RecordingManager:
                 logging.error("Recording configuration validation failed")
                 return False
             
-            # Initialize SessionRecorder
-            self.recorder = SessionRecorder(
-                output_dir=self.settings.RECORDING_OUTPUT_DIR,
-                max_file_size_mb=self.settings.RECORDING_MAX_FILE_SIZE_MB,
-                max_duration_minutes=self.settings.RECORDING_MAX_DURATION_MINUTES,
-                fps=self.settings.RECORDING_FPS,
-                quality=self.settings.RECORDING_QUALITY,
-                resolution_scale=self.settings.RECORDING_RESOLUTION_SCALE,
-                recording_mode=self.settings.RECORDING_MODE
-            )
+            # Note: SmartSessionRecorder will be created per session, not globally
+            # This allows each session to have its own intelligent recording instance
             
             # Initialize FileRotationManager
             self.rotation_manager = FileRotationManager(
@@ -127,7 +122,7 @@ class RecordingManager:
 
     def start_session_recording(self, session_id: str, connection_info: Dict[str, Any]) -> bool:
         """
-        Start recording for a new session.
+        Start intelligent recording for a new session.
         
         Args:
             session_id: Unique identifier for the session
@@ -145,8 +140,27 @@ class RecordingManager:
                 logging.warning(f"Already recording session {self.current_session_id}")
                 return False
             
-            # Start recording
-            if self.recorder.start_recording(session_id, connection_info):
+            # Create recording configuration
+            recording_config = self._create_recording_config()
+            
+            # Create smart recorder for this session
+            self.smart_recorder = SmartSessionRecorder(
+                output_dir=self.settings.RECORDING_OUTPUT_DIR,
+                connection_info=connection_info,
+                recording_config=recording_config
+            )
+            
+            # Set callbacks for smart recorder
+            self.smart_recorder.set_callbacks(
+                on_started=self._on_smart_recording_started,
+                on_stopped=self._on_smart_recording_stopped,
+                on_paused=self._on_smart_recording_paused,
+                on_resumed=self._on_smart_recording_resumed,
+                on_new_segment=self._on_new_segment_created
+            )
+            
+            # Start intelligent recording
+            if self.smart_recorder.start_recording(session_id):
                 self.current_session_id = session_id
                 self.current_connection_info = connection_info
                 
@@ -157,10 +171,11 @@ class RecordingManager:
                     except Exception as e:
                         logging.error(f"Error in recording started callback: {e}")
                 
-                logging.info(f"Started recording for session {session_id}")
+                logging.info(f"Started intelligent recording for session {session_id}")
                 return True
             else:
-                logging.error(f"Failed to start recording for session {session_id}")
+                logging.error(f"Failed to start intelligent recording for session {session_id}")
+                self.smart_recorder = None
                 return False
                 
         except Exception as e:
@@ -174,7 +189,7 @@ class RecordingManager:
 
     def stop_session_recording(self) -> bool:
         """
-        Stop the current recording session.
+        Stop the current intelligent recording session.
         
         Returns:
             True if recording stopped successfully, False otherwise
@@ -186,8 +201,14 @@ class RecordingManager:
                 
             session_id = self.current_session_id
             
-            if self.recorder.stop_recording():
-                # Optionally compress recording before upload
+            # Stop smart recorder and get created files
+            created_files = []
+            if self.smart_recorder:
+                created_files = self.smart_recorder.stop_recording()
+            
+            # Process created files for compression and upload
+            if created_files:
+                # Optionally compress recordings before upload
                 try:
                     compression_enabled = getattr(self.settings, 'RECORDING_COMPRESSION_ENABLED', True)
                     compression_crf = getattr(self.settings, 'RECORDING_COMPRESSION_CRF', 28)
@@ -195,25 +216,24 @@ class RecordingManager:
                     compression_enabled = True
                     compression_crf = 28
 
-                recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
-                # Find the recorded video file for this session (if any)
-                video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
-                if compression_enabled and video_files:
+                if compression_enabled:
                     # Compress in background to avoid blocking shutdown
-                    video_file = video_files[0]
-                    try:
-                        Thread = threading.Thread
-                        t = Thread(target=self._compress_recording_async, args=(video_file, compression_crf), daemon=True)
-                        t.start()
-                        logging.info(f"Started background compression for {video_file.name}")
-                    except Exception as e:
-                        logging.warning(f"Failed to start compression thread: {e}")
+                    for file_path in created_files:
+                        try:
+                            Thread = threading.Thread
+                            t = Thread(target=self._compress_recording_async, 
+                                     args=(Path(file_path), compression_crf), daemon=True)
+                            t.start()
+                            logging.info(f"Started background compression for {Path(file_path).name}")
+                        except Exception as e:
+                            logging.warning(f"Failed to start compression thread: {e}")
 
                 # Trigger upload if API is available and auto_upload is enabled
                 if (self.api_manager and 
                     hasattr(self.settings, 'API_AUTO_UPLOAD') and 
                     self.settings.API_AUTO_UPLOAD):
-                    self._queue_recording_upload(session_id)
+                    for file_path in created_files:
+                        self._queue_recording_upload(session_id, file_path)
                 
                 # Call callback if set
                 if self.on_recording_stopped:
@@ -224,11 +244,15 @@ class RecordingManager:
                 
                 self.current_session_id = None
                 self.current_connection_info = None
+                self.smart_recorder = None
                 
-                logging.info(f"Stopped recording for session {session_id}")
+                logging.info(f"Stopped intelligent recording for session {session_id}, created {len(created_files)} files")
                 return True
             else:
-                logging.error("Failed to stop recording")
+                logging.error("Failed to stop recording - no files created")
+                self.smart_recorder = None
+                return False
+                self.smart_recorder = None
                 return False
                 
         except Exception as e:
@@ -238,8 +262,8 @@ class RecordingManager:
     def is_recording(self) -> bool:
         """Check if currently recording."""
         return (self.is_initialized and 
-                self.recorder is not None and 
-                self.recorder.is_recording)
+                self.smart_recorder is not None and 
+                self.current_session_id is not None)
 
     def get_recording_status(self) -> Dict[str, Any]:
         """
@@ -257,8 +281,8 @@ class RecordingManager:
                 "current_connection_info": self.current_connection_info
             }
             
-            if self.is_recording() and self.recorder:
-                recording_info = self.recorder.get_recording_info()
+            if self.is_recording() and self.smart_recorder:
+                recording_info = self.smart_recorder.get_recording_info()
                 if recording_info:
                     status.update(recording_info)
             
@@ -348,6 +372,8 @@ class RecordingManager:
 
     def set_callbacks(self, on_started: Optional[Callable[[str], None]] = None,
                      on_stopped: Optional[Callable[[str], None]] = None,
+                     on_paused: Optional[Callable[[str], None]] = None,
+                     on_resumed: Optional[Callable[[str], None]] = None,
                      on_error: Optional[Callable[[str, str], None]] = None):
         """
         Set callback functions for recording events.
@@ -355,11 +381,153 @@ class RecordingManager:
         Args:
             on_started: Called when recording starts (session_id)
             on_stopped: Called when recording stops (session_id)
+            on_paused: Called when recording is paused (reason)
+            on_resumed: Called when recording is resumed (reason)
             on_error: Called on recording error (session_id, error_message)
         """
         self.on_recording_started = on_started
         self.on_recording_stopped = on_stopped
+        self.on_recording_paused = on_paused
+        self.on_recording_resumed = on_resumed
         self.on_recording_error = on_error
+
+    def _create_recording_config(self) -> Dict[str, Any]:
+        """Create recording configuration from config.json and settings."""
+        try:
+            # Import WATS config system
+            from ..config import get_config
+            
+            # Get config from config.json
+            wats_config = get_config()
+            recording_config_dict = wats_config.get('recording', {})
+            
+            # Import smart recording config
+            from .smart_recording_config import get_smart_recording_config
+            
+            # Combine config.json + settings
+            config = get_smart_recording_config(recording_config_dict, self.settings)
+            
+            logging.info(f"Smart recording config loaded from config.json and settings")
+            return config
+            
+        except ImportError as e:
+            logging.warning(f"Could not load WATS config system: {e}")
+            # Fallback to settings-only configuration
+            return self._create_fallback_recording_config()
+        except Exception as e:
+            logging.error(f"Error loading smart recording config: {e}")
+            # Fallback to settings-only configuration
+            return self._create_fallback_recording_config()
+
+    def _create_fallback_recording_config(self) -> Dict[str, Any]:
+        """Create fallback recording configuration from settings only."""
+        return {
+            'fps': getattr(self.settings, 'RECORDING_FPS', 30),
+            'quality': getattr(self.settings, 'RECORDING_QUALITY', 75),
+            'resolution_scale': getattr(self.settings, 'RECORDING_RESOLUTION_SCALE', 1.0),
+            'inactivity_timeout_minutes': getattr(self.settings, 'RECORDING_INACTIVITY_TIMEOUT_MINUTES', 10),
+            'create_new_file_after_pause': getattr(self.settings, 'RECORDING_CREATE_NEW_FILE_AFTER_PAUSE', True),
+            'pause_on_minimized': getattr(self.settings, 'RECORDING_PAUSE_ON_MINIMIZED', True),
+            'pause_on_covered': getattr(self.settings, 'RECORDING_PAUSE_ON_COVERED', True),
+            'max_file_duration_minutes': getattr(self.settings, 'RECORDING_MAX_DURATION_MINUTES', 30),
+            'max_file_size_mb': getattr(self.settings, 'RECORDING_MAX_FILE_SIZE_MB', 100),
+            'window_tracking_interval': getattr(self.settings, 'RECORDING_WINDOW_TRACKING_INTERVAL', 1.0),
+            'compression_enabled': getattr(self.settings, 'RECORDING_COMPRESSION_ENABLED', True),
+            'compression_crf': getattr(self.settings, 'RECORDING_COMPRESSION_CRF', 28),
+            'debug_window_tracking': getattr(self.settings, 'RECORDING_DEBUG_WINDOW_TRACKING', False),
+            'debug_activity_monitoring': getattr(self.settings, 'RECORDING_DEBUG_ACTIVITY_MONITORING', False),
+        }
+
+    # Smart recorder callbacks
+    def _on_smart_recording_started(self, session_id: str):
+        """Callback when smart recording starts."""
+        logging.info(f"Smart recording started for session {session_id}")
+
+    def _on_smart_recording_stopped(self, session_id: str):
+        """Callback when smart recording stops."""
+        logging.info(f"Smart recording stopped for session {session_id}")
+
+    def _on_smart_recording_paused(self, reason: str):
+        """Callback when smart recording is paused."""
+        logging.info(f"Smart recording paused: {reason}")
+        if self.on_recording_paused:
+            try:
+                self.on_recording_paused(reason)
+            except Exception as e:
+                logging.error(f"Error in recording paused callback: {e}")
+
+    def _on_smart_recording_resumed(self, reason: str):
+        """Callback when smart recording is resumed."""
+        logging.info(f"Smart recording resumed: {reason}")
+        if self.on_recording_resumed:
+            try:
+                self.on_recording_resumed(reason)
+            except Exception as e:
+                logging.error(f"Error in recording resumed callback: {e}")
+
+    def _on_new_segment_created(self, segment):
+        """Callback when a new recording segment is created."""
+        logging.info(f"New recording segment created: {segment.file_path.name} (reason: {segment.reason})")
+
+    def _queue_recording_upload(self, session_id: str, file_path: str):
+        """Queue a recording file for upload."""
+        if self.api_manager:
+            try:
+                self.api_manager.queue_upload(file_path, session_id)
+                logging.info(f"Queued recording for upload: {Path(file_path).name}")
+            except Exception as e:
+                logging.error(f"Failed to queue upload for {file_path}: {e}")
+
+    def _compress_recording_async(self, video_file: Path, crf: int):
+        """Compress a recording file asynchronously."""
+        try:
+            if not video_file.exists():
+                logging.warning(f"Compression requested but file not found: {video_file}")
+                return
+
+            ffmpeg_cmd = shutil.which('ffmpeg')
+            if not ffmpeg_cmd:
+                logging.warning("ffmpeg not found in PATH; skipping compression")
+                return
+
+            tmp_file = video_file.with_suffix('.tmp.mp4')
+            
+            # Build ffmpeg command
+            cmd = [
+                ffmpeg_cmd,
+                '-y',
+                '-i', str(video_file),
+                '-c:v', 'libx264',
+                '-preset', 'veryfast',
+                '-crf', str(crf),
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                str(tmp_file)
+            ]
+
+            logging.info(f"Compressing {video_file.name} -> CRF={crf}")
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            if proc.returncode != 0:
+                logging.error(f"ffmpeg failed for {video_file.name}: {proc.stderr}")
+                if tmp_file.exists():
+                    tmp_file.unlink()
+                return
+
+            # Replace original with compressed file
+            try:
+                backup = video_file.with_suffix('.bak.mp4')
+                video_file.rename(backup)
+                tmp_file.rename(video_file)
+                backup.unlink()
+                logging.info(f"Compression completed and replaced original: {video_file.name}")
+            except Exception as e:
+                logging.error(f"Failed to replace original file after compression: {e}")
+                if tmp_file.exists():
+                    tmp_file.unlink()
+
+        except Exception as e:
+            logging.error(f"Unexpected error during compression: {e}")
 
     def shutdown(self):
         """Shutdown the recording manager and cleanup resources."""
