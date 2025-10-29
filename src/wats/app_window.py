@@ -70,7 +70,22 @@ class ConnectionData:
         if not particularidade_str: return ''
         particularidades = parse_particularities(particularidade_str)
         if not particularidades: return ''
-        return f"🔗 {particularidades[0][0]}" if len(particularidades) == 1 else f"🔗 {len(particularidades)} Clientes"
+        
+        # Conta quantos têm URL (links de wiki)
+        com_wiki = sum(1 for _, url in particularidades if url)
+        total = len(particularidades)
+        
+        if total == 1:
+            nome, url = particularidades[0]
+            if url:
+                return f"🔗 {nome}"
+            else:
+                return f"📋 {nome}"
+        else:
+            if com_wiki > 0:
+                return f"🔗 {com_wiki} Wiki{'s' if com_wiki != 1 else ''} | 📋 {total - com_wiki} Info{'s' if (total - com_wiki) != 1 else ''}"
+            else:
+                return f"📋 {total} Cliente{'s' if total != 1 else ''}"
 
     def get_treeview_values(self) -> Tuple:
         """Retorna a tupla de valores na ordem esperada pela Treeview."""

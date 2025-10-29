@@ -1,0 +1,84 @@
+{
+  "recording": {
+    "_comment": "Configurações básicas de gravação",
+    "enabled": true,
+    "output_dir": "./recordings",
+    "fps": 30,
+    "quality": 75,
+    "resolution_scale": 1.0,
+    "max_file_size_mb": 100,
+    "max_duration_minutes": 30,
+    "compression_enabled": true,
+    "compression_crf": 28,
+    
+    "_comment_smart": "Configurações específicas da gravação inteligente",
+    "smart_recording": {
+      "window_tracking_interval": 1.0,
+      "inactivity_timeout_minutes": 10,
+      "pause_on_minimized": true,
+      "pause_on_covered": true,
+      "pause_on_inactive": true,
+      "create_new_file_after_pause": true,
+      "create_new_file_after_inactivity": true,
+      "debug_window_tracking": false,
+      "debug_activity_monitoring": false,
+      
+      "_comment_advanced": "Configurações avançadas (opcionais)",
+      "window_reacquisition_attempts": 5,
+      "window_reacquisition_delay": 2.0,
+      "activity_detection_interval": 0.5,
+      "mouse_sensitivity": 5,
+      "save_activity_log": false,
+      "save_window_state_log": false
+    },
+    
+    "_comment_rotation": "Configurações de rotação e limpeza",
+    "file_rotation": {
+      "max_total_size_gb": 10.0,
+      "max_file_age_days": 30,
+      "cleanup_interval_hours": 6
+    },
+    
+    "_comment_session_protection": "Proteção de dados sensíveis",
+    "session_protection": {
+      "enabled": true,
+      "sanitize_metadata": true,
+      "remove_sensitive_fields": true,
+      "log_protection_actions": true
+    }
+  },
+  
+  "_examples": {
+    "description": "Exemplos de configurações para diferentes cenários",
+    
+    "high_performance": {
+      "fps": 15,
+      "quality": 50,
+      "resolution_scale": 0.8,
+      "inactivity_timeout_minutes": 5,
+      "window_tracking_interval": 2.0
+    },
+    
+    "high_quality": {
+      "fps": 60,
+      "quality": 95,
+      "resolution_scale": 1.0,
+      "compression_crf": 18,
+      "inactivity_timeout_minutes": 15
+    },
+    
+    "minimal_interruption": {
+      "pause_on_covered": false,
+      "pause_on_inactive": false,
+      "inactivity_timeout_minutes": 60,
+      "create_new_file_after_pause": false
+    },
+    
+    "debug_mode": {
+      "debug_window_tracking": true,
+      "debug_activity_monitoring": true,
+      "save_activity_log": true,
+      "save_window_state_log": true
+    }
+  }
+}

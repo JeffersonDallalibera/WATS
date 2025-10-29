@@ -19,7 +19,35 @@
     "max_duration_minutes": 30,
     "max_total_size_gb": 10.0,
     "max_file_age_days": 30,
-    "cleanup_interval_hours": 6
+    "cleanup_interval_hours": 6,
+    "smart_recording": {
+      "window_tracking_interval": 1.0,
+      "inactivity_timeout_minutes": 10,
+      "pause_on_minimized": true,
+      "pause_on_covered": true,
+      "pause_on_inactive": true,
+      "create_new_file_after_pause": true,
+      "create_new_file_after_inactivity": true,
+      "debug_window_tracking": false,
+      "debug_activity_monitoring": false,
+      "window_reacquisition_attempts": 5,
+      "window_reacquisition_delay": 2.0,
+      "activity_detection_interval": 0.5,
+      "mouse_sensitivity": 5,
+      "save_activity_log": false,
+      "save_window_state_log": false
+    },
+    "compression": {
+      "enabled": true,
+      "crf": 28,
+      "preset": "veryfast"
+    },
+    "session_protection": {
+      "enabled": true,
+      "sanitize_metadata": true,
+      "remove_sensitive_fields": true,
+      "log_protection_actions": true
+    }
   },
   "api": {
     "enabled": false,
@@ -34,7 +62,7 @@
     "max_file_age_days": 30
   },
   "application": {
-    "log_level": "INFO",
+    "log_level": "DEBUG",
     "theme": "Dark"
   }
 }

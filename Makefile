@@ -83,9 +83,35 @@ test-fast: ## Executa testes rápidos (exclui testes lentos)
 quality: format lint type-check security test ## Executa todas as verificações de qualidade
 
 # Build
-build: ## Constrói o executável
+build: ## Constrói o executável (detecta plataforma automaticamente)
 	@echo "$(GREEN)Construindo executável...$(NC)"
-	cd $(SCRIPTS_DIR) && pyinstaller build_executable.spec
+	$(PYTHON) build.py
+
+build-windows: ## Constrói executável para Windows
+	@echo "$(GREEN)Construindo executável para Windows...$(NC)"
+	$(PYTHON) build.py --platform windows
+
+build-linux: ## Constrói executável para Linux
+	@echo "$(GREEN)Construindo executável para Linux...$(NC)"
+	$(PYTHON) build.py --platform linux
+
+build-docker: ## Constrói usando Docker (multiplataforma)
+	@echo "$(GREEN)Construindo com Docker...$(NC)"
+	$(PYTHON) build.py --platform docker
+
+build-all: ## Constrói para todas as plataformas (requer Docker)
+	@echo "$(GREEN)Construindo para todas as plataformas...$(NC)"
+	$(PYTHON) build.py --platform windows || true
+	$(PYTHON) build.py --platform linux || true
+	$(PYTHON) build.py --platform docker || true
+
+package-deb: build-linux ## Cria pacote .deb para Linux
+	@echo "$(GREEN)Criando pacote .deb...$(NC)"
+	@if [ -f "wats_1.0.0_amd64.deb" ]; then \
+		echo "✅ Pacote .deb criado: wats_1.0.0_amd64.deb"; \
+	else \
+		echo "❌ Falha ao criar pacote .deb"; \
+	fi
 
 # Execução
 run: ## Executa a aplicação

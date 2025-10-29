@@ -1,0 +1,160 @@
+name: Build WATS Multi-Platform
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Build Windows executable
+      run: |
+        pyinstaller --clean --noconfirm WATS-multiplatform.spec
+    
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: wats-windows
+        path: dist/WATS/
+    
+    - name: Create Windows release archive
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        Compress-Archive -Path dist/WATS/* -DestinationPath wats-windows.zip
+    
+    - name: Upload to release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./wats-windows.zip
+        asset_name: wats-windows.zip
+        asset_content_type: application/zip
+
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-tk dpkg-dev
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements-linux.txt
+    
+    - name: Build Linux executable
+      run: |
+        pyinstaller --clean --noconfirm WATS-multiplatform.spec
+    
+    - name: Create .deb package
+      run: |
+        # Cria estrutura do pacote .deb
+        PACKAGE_DIR="wats-package"
+        mkdir -p $PACKAGE_DIR/DEBIAN
+        mkdir -p $PACKAGE_DIR/opt/wats
+        mkdir -p $PACKAGE_DIR/usr/share/applications
+        mkdir -p $PACKAGE_DIR/usr/share/pixmaps
+        
+        # Copia arquivos
+        cp -r dist/wats/* $PACKAGE_DIR/opt/wats/
+        cp assets/ats.ico $PACKAGE_DIR/usr/share/pixmaps/wats.ico 2>/dev/null || true
+        
+        # Cria controle
+        cat > $PACKAGE_DIR/DEBIAN/control << EOF
+        Package: wats
+        Version: 1.0.0
+        Section: utils
+        Priority: optional
+        Architecture: amd64
+        Depends: python3, python3-tk
+        Maintainer: ATS Team <contato@ats.com>
+        Description: WATS - Sistema de Monitoramento e Auditoria
+        EOF
+        
+        # Scripts de instalação
+        cat > $PACKAGE_DIR/DEBIAN/postinst << 'EOF'
+        #!/bin/bash
+        chmod +x /opt/wats/wats
+        ln -sf /opt/wats/wats /usr/local/bin/wats
+        EOF
+        chmod 755 $PACKAGE_DIR/DEBIAN/postinst
+        
+        # Arquivo .desktop
+        cat > $PACKAGE_DIR/usr/share/applications/wats.desktop << EOF
+        [Desktop Entry]
+        Name=WATS
+        Comment=Sistema de Monitoramento e Auditoria
+        Exec=/opt/wats/wats
+        Icon=/usr/share/pixmaps/wats.ico
+        Terminal=false
+        Type=Application
+        Categories=Utility;Security;
+        EOF
+        
+        # Constrói o pacote
+        dpkg-deb --build $PACKAGE_DIR wats_1.0.0_amd64.deb
+    
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: wats-linux
+        path: |
+          dist/wats/
+          wats_1.0.0_amd64.deb
+    
+    - name: Upload to release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./wats_1.0.0_amd64.deb
+        asset_name: wats_1.0.0_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
+
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
