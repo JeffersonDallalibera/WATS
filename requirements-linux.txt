@@ -16,3 +16,7 @@ PyInstaller>=5.0.0
 altgraph>=0.17.0
 pyinstaller-hooks-contrib>=2023.0
 pefile>=2023.0.0
+
+# Bibliotecas RDP Python (opcionais)
+# rdpy>=1.3.2
+# twisted>=22.0.0

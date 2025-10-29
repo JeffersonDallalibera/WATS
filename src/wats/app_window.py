@@ -933,7 +933,8 @@ class Application(ctk.CTk):
                 self.after(0, self._populate_tree)
     
     def _connect_rdp(self, data: Dict[str, Any]):
-        """Conecta usando o executável rdp.exe customizado."""
+        """Conecta usando RDP multiplataforma."""
+        from .utils.rdp_connector import rdp_connector
         
         # 🔒 VERIFICAÇÃO DE PROTEÇÃO DE SESSÃO
         if session_protection_manager and session_protection_manager.is_session_protected(data.get('db_id')):
@@ -970,51 +971,15 @@ class Application(ctk.CTk):
         print(f"[DEBUG CONSOLE] Iniciando conexão RDP para {data.get('title')}")
         logging.info(f"[DEBUG LOGGING] Iniciando conexão RDP para {data.get('title')}")
         
-        # DEBUG: Verificar onde estão os logs
-        from .config import LOG_FILE, USER_DATA_DIR
-        print(f"[DEBUG] USER_DATA_DIR: {USER_DATA_DIR}")
-        print(f"[DEBUG] LOG_FILE: {LOG_FILE}")
-        print(f"[DEBUG] Log file exists: {os.path.exists(LOG_FILE)}")
+        # Verifica se cliente RDP está disponível
+        is_available, status_msg = rdp_connector.is_rdp_available()
+        if not is_available:
+            logging.error(f"[RDP] Cliente RDP não disponível: {status_msg}")
+            error_msg = f"Cliente RDP não disponível:\n{status_msg}\n\n{rdp_connector.get_installation_instructions()}"
+            messagebox.showerror("Erro - Cliente RDP", error_msg)
+            return
         
-        # Verificar handlers do logger
-        root_logger = logging.getLogger()
-        print(f"[DEBUG] Logger level: {root_logger.level}")
-        print(f"[DEBUG] Logger handlers: {len(root_logger.handlers)}")
-        for i, handler in enumerate(root_logger.handlers):
-            print(f"[DEBUG] Handler {i}: {type(handler).__name__}")
-        
-        rdp_exe_path = os.path.join(ASSETS_DIR, 'rdp.exe')
-        
-        # Debug detalhado para localizar o rdp.exe
-        logging.info(f"[RDP] BASE_DIR: {BASE_DIR}")
-        logging.info(f"[RDP] ASSETS_DIR: {ASSETS_DIR}")
-        logging.info(f"[RDP] Procurando rdp.exe em: {rdp_exe_path}")
-        logging.info(f"[RDP] sys.frozen: {getattr(sys, 'frozen', False)}")
-        logging.info(f"[RDP] sys.executable: {sys.executable}")
-        
-        if not os.path.exists(rdp_exe_path):
-            # Tenta localizar o rdp.exe em outros locais possíveis
-            possible_paths = [
-                os.path.join(os.path.dirname(sys.executable), 'assets', 'rdp.exe'),
-                os.path.join(os.path.dirname(sys.executable), '_internal', 'assets', 'rdp.exe'),
-                os.path.join(os.getcwd(), 'assets', 'rdp.exe'),
-                os.path.join(BASE_DIR, '..', 'assets', 'rdp.exe')
-            ]
-            
-            found_path = None
-            for path in possible_paths:
-                logging.info(f"[RDP] Tentando: {path}")
-                if os.path.exists(path):
-                    found_path = path
-                    logging.info(f"[RDP] Encontrado rdp.exe em: {path}")
-                    break
-            
-            if found_path:
-                rdp_exe_path = found_path
-            else:
-                logging.error(f"[RDP] rdp.exe não encontrado em nenhum local")
-                messagebox.showerror("Erro", f"Executável não encontrado:\n{rdp_exe_path}\n\nCaminhos testados:\n" + "\n".join(possible_paths))
-                return
+        logging.info(f"[RDP] Cliente RDP disponível: {status_msg}")
         
         # Start recording if enabled
         session_id = None
@@ -1040,43 +1005,26 @@ class Application(ctk.CTk):
                 logging.warning(f"Failed to start recording for RDP connection to {data.get('ip')}")
         
         def task():
-            cmd = [
-                rdp_exe_path, f"/v:{data['ip']}", f"/u:{data['user']}", f"/p:{data['pwd']}",
-                f"/title:{data['title']}", '/max', '/noprinters', '/nosound', '/nowallpaper',
-                '/drives:fixed,-c:', '/mon:2'
-            ]
-            icon_path = os.path.join(ASSETS_DIR, 'ats.ico') 
-            if os.path.exists(icon_path):
-                cmd.append(f'/icon:{icon_path}')
             try:
-                # Don't log the raw password. Create a masked copy for logging.
-                masked_cmd = [c if not c.startswith('/p:') else '/p:***' for c in cmd]
-                logging.info(f"Executando RDP: {' '.join(masked_cmd)}")
-
-                # Capture output to show a helpful error message on failure.
-                proc = subprocess.run(cmd, capture_output=True, text=True)
-                if proc.returncode != 0:
-                    # Log full output (server logs may contain useful info)
-                    logging.error(f"rdp.exe exit {proc.returncode}. stdout: {proc.stdout}; stderr: {proc.stderr}")
-                    # Show a user-friendly error (truncate to avoid huge dialogs)
-                    err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
-                    if len(err_msg) > 1000:
-                        err_msg = err_msg[:1000] + "... (truncated)"
-                    messagebox.showerror("Erro", f"Falha ao executar o rdp.exe:\n{err_msg}\n\n(Código de saída: {proc.returncode})")
+                # Usa o conector RDP multiplataforma
+                success = rdp_connector.connect(data)
+                
+                if success:
+                    logging.info(f"RDP connection initiated successfully for {data.get('ip')}")
                 else:
-                    logging.info(f"RDP connection completed successfully for {data.get('ip')}")
+                    logging.error(f"Failed to initiate RDP connection for {data.get('ip')}")
+                    messagebox.showerror("Erro", f"Falha ao conectar via RDP para {data.get('ip')}")
                     
-            except FileNotFoundError as e:
-                logging.error(f"rdp.exe não encontrado: {e}")
-                messagebox.showerror("Erro", f"Executável rdp.exe não encontrado:\n{e}")
             except Exception as e:
-                logging.exception("Erro inesperado ao executar rdp.exe")
-                messagebox.showerror("Erro", f"Falha ao executar o rdp.exe:\n{e}")
+                logging.exception("Erro inesperado ao conectar via RDP")
+                messagebox.showerror("Erro", f"Falha ao conectar via RDP:\n{e}")
             finally:
                 # Stop recording when RDP session ends
                 if session_id and self.recording_manager:
                     if self.recording_manager.stop_session_recording():
                         logging.info(f"Recording stopped for session {session_id}")
+                    else:
+                        logging.warning(f"Failed to stop recording for session {session_id}")
                     else:
                         logging.warning(f"Failed to stop recording for session {session_id}")
         

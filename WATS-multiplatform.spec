@@ -20,9 +20,12 @@ binaries = []
 # Importações específicas por plataforma
 if is_windows:
     hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'dotenv', 'mss', 'psutil']
+    # Inclui apenas rdp.exe no Windows
+    datas.append(('assets/rdp.exe', 'assets'))
 else:
-    # Linux - sem dependências do Windows
+    # Linux - sem dependências do Windows e sem rdp.exe
     hiddenimports = ['dotenv', 'mss', 'psutil']
+    # Não inclui rdp.exe (não funciona em Linux)
 
 # CustomTkinter com inclusão específica de recursos
 tmp_ret = collect_all('customtkinter')

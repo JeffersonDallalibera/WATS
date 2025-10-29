@@ -5,20 +5,25 @@ Este documento explica como gerar executáveis do WATS para Windows (.exe) e Lin
 ## 📋 Requisitos
 
 ### Windows
+
 - Python 3.11+
 - pip
 - PyInstaller
 - Todas as dependências do `requirements.txt`
+- **FreeRDP** (opcional, para melhor compatibilidade): `winget install FreeRDP.FreeRDP`
 
 ### Linux
+
 - Python 3.11+
 - pip
 - PyInstaller
 - python3-tk (para interface gráfica)
 - dpkg-dev (para criar pacotes .deb)
+- **FreeRDP** (recomendado): `sudo apt-get install freerdp2-x11`
 - Todas as dependências do `requirements-linux.txt`
 
 ### Docker (Opcional)
+
 - Docker Desktop ou Docker Engine
 - Para builds cross-platform
 

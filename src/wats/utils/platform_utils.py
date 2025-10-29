@@ -3,6 +3,7 @@ Compatibilidade multiplataforma para WATS
 Lida com dependências específicas do Windows
 """
 
+import os
 import sys
 import platform
 

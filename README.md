@@ -1,43 +1,59 @@
-# WATS - Gerenciador de Conexões Windows Terminal Server
+# WATS - Gerenciador de Conexões Multiplataforma
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://microsoft.com/windows)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/BUILD_MULTIPLATFORM.md)
 
-**WATS V4.2** é um Gerenciador de Conexões Windows Terminal Server abrangente com recursos avançados de gravação de sessões para monitoramento e auditoria de conexões RDP.
+**WATS V4.2** é um Gerenciador de Conexões RDP Multiplataforma abrangente com recursos avançados de gravação de sessões para monitoramento e auditoria de conexões RDP.
 
 ## 🚀 Recursos
 
 ### Funcionalidades Principais
 
-- **Gerenciamento de Conexões RDP**: Gestão centralizada de conexões de área de trabalho remota
-- **Integração com Banco de Dados**: Suporte otimizado para SQL Server
-- **Gerenciamento de Usuários**: Painel administrativo para gestão de usuários e conexões
-- **Organização por Grupos**: Organize conexões por grupos para melhor gerenciamento
+- **🖥️ Multiplataforma**: Funciona nativamente no Windows e Linux
+- **🔗 Gerenciamento de Conexões RDP**: Gestão centralizada com suporte a FreeRDP
+- **🗄️ Integração com Banco de Dados**: Suporte otimizado para SQL Server e PostgreSQL
+- **👥 Gerenciamento de Usuários**: Painel administrativo para gestão de usuários e conexões
+- **📁 Organização por Grupos**: Organize conexões por grupos para melhor gerenciamento
 
-### Sistema de Gravação de Sessões _(NOVO)_
+### Sistema RDP Multiplataforma _(NOVO)_
 
-- **Múltiplos Modos de Gravação**: Tela cheia, janela RDP específica ou gravação da janela ativa
-- **Performance Leve**: Captura de tela otimizada com uso mínimo de CPU/memória
-- **Compressão H.264**: Compressão de vídeo eficiente para redução do tamanho dos arquivos
-- **Gerenciamento Automático de Arquivos**: Rotação de arquivos baseada em tamanho e tempo com limpeza
-- **Conformidade com Privacidade**: Escopo de gravação configurável para requisitos de privacidade
+- **🔄 Detecção Automática**: Escolhe automaticamente o melhor cliente RDP disponível
+- **🐧 Suporte Linux**: FreeRDP, rdesktop, remmina integrados
+- **🪟 Compatibilidade Windows**: rdp.exe customizado + MSTSC nativo
+- **📊 Controle de Sessões**: Gerenciamento completo de sessões ativas
+- **🔧 Fallback Inteligente**: Sistema robusto com múltiplas opções de backup
+
+### Sistema de Gravação de Sessões
+
+- **📹 Múltiplos Modos de Gravação**: Tela cheia, janela RDP específica ou gravação da janela ativa
+- **⚡ Performance Leve**: Captura de tela otimizada com uso mínimo de CPU/memória
+- **🗜️ Compressão H.264**: Compressão de vídeo eficiente para redução do tamanho dos arquivos
+- **🔄 Gerenciamento Automático de Arquivos**: Rotação de arquivos baseada em tamanho e tempo com limpeza
+- **🔒 Conformidade com Privacidade**: Escopo de gravação configurável para requisitos de privacidade
 
 ### Recursos Avançados
 
-- **Interface Moderna**: Interface baseada em CustomTkinter com suporte a temas escuro/claro
-- **Monitoramento em Tempo Real**: Status de conexão ao vivo e monitoramento de heartbeat
-- **Trilha de Auditoria**: Logging abrangente e metadados de sessão
-- **Compilação de Executável**: Executável standalone com PyInstaller
+- **🎨 Interface Moderna**: Interface baseada em CustomTkinter com suporte a temas escuro/claro
+- **📊 Monitoramento em Tempo Real**: Status de conexão ao vivo e monitoramento de heartbeat
+- **📋 Trilha de Auditoria**: Logging abrangente e metadados de sessão
+- **📦 Build Multiplataforma**: Executável Windows (.exe) e pacote Linux (.deb)
 
 ## 📋 Requisitos
 
-### Requisitos do Sistema
+### Windows
 
 - **SO**: Windows 10/11
 - **Python**: 3.11+
 - **Memória**: 4GB RAM mínimo
-- **Disco**: 2GB de espaço livre (mais para gravações)
+- **FreeRDP**: `winget install FreeRDP.FreeRDP` (recomendado)
+
+### Linux
+
+- **SO**: Ubuntu 20.04+, Debian 11+, CentOS 8+
+- **Python**: 3.11+
+- **Memória**: 4GB RAM mínimo
+- **FreeRDP**: `sudo apt-get install freerdp2-x11` (recomendado)
 
 ### Dependências
 

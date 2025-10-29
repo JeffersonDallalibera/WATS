@@ -55,6 +55,17 @@ echo
 echo "📦 INSTALANDO DEPENDÊNCIAS..."
 echo "=============================="
 
+# Verifica se FreeRDP está instalado (recomendado)
+if ! command -v xfreerdp &> /dev/null; then
+    echo "⚠️  FreeRDP não encontrado. Recomendamos instalar para melhor funcionalidade RDP:"
+    echo "   Ubuntu/Debian: sudo apt-get install freerdp2-x11"
+    echo "   CentOS/RHEL:   sudo yum install freerdp"
+    echo "   Arch Linux:    sudo pacman -S freerdp"
+    echo
+    echo "O sistema funcionará com clientes RDP alternativos se disponíveis."
+    echo
+fi
+
 # Instala dependências do Linux
 pip install --upgrade pip
 pip install -r requirements-linux.txt
