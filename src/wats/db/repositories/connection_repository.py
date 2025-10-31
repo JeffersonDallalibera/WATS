@@ -11,6 +11,9 @@ class ConnectionRepository(BaseRepository):
     def __init__(self, db_manager: DatabaseManager, user_repo: 'UserRepository'):
         super().__init__(db_manager)
         self.user_repo = user_repo # Dependência para pegar permissões
+        # Import aqui para evitar circular imports
+        from src.wats.db.repositories.individual_permission_repository import IndividualPermissionRepository
+        self.individual_perm_repo = IndividualPermissionRepository(db_manager)
 
     def select_all(self, username: str) -> List[Any]:
         user_id, is_admin = self.user_repo.get_user_role(username)
@@ -24,7 +27,7 @@ class ConnectionRepository(BaseRepository):
                 {self.db.ISNULL}(C2.con_cliente, '') AS con_cliente,
                 Con.con_tipo
             FROM Conexao_WTS Con
-            LEFT JOIN Grupo_WTS Gru ON Con.Gru_Codigo = Gru.Gru_Codigo
+            LEFT JOIN Grupo_WTS Gru ON Con.Gru_Codigo = Gru.Gru_Codigo and Gru.Gru_codigo <> 33
             LEFT JOIN (
                 SELECT Con_Codigo,
                     (CASE
@@ -40,16 +43,35 @@ class ConnectionRepository(BaseRepository):
         if self.db.db_type == 'sqlserver':
              base_query = base_query.replace("|| '|' ||", "+ '|' +")
              
-        where_clause = ""
+        where_clause = "WHERE Con.Gru_Codigo <> 33"
         params = []
+        
         if not is_admin:
-            if user_id is None: return []
-            where_clause = f"WHERE EXISTS (SELECT 1 FROM Permissao_Grupo_WTS p WHERE p.Usu_Id = {self.db.PARAM} AND p.Gru_Codigo = Con.Gru_Codigo)"
-            params.append(user_id)
+            if user_id is None: 
+                return []
+            
+            # Nova lógica: verificar TANTO permissões de grupo QUANTO permissões individuais
+            where_clause += f""" AND (
+                EXISTS (
+                    SELECT 1 FROM Permissao_Grupo_WTS p 
+                    WHERE p.Usu_Id = {self.db.PARAM} AND p.Gru_Codigo = Con.Gru_Codigo
+                )
+                OR EXISTS (
+                    SELECT 1 FROM Permissao_Conexao_Individual_WTS pci
+                    WHERE pci.Usu_Id = {self.db.PARAM} 
+                    AND pci.Con_Codigo = Con.Con_Codigo 
+                    AND pci.Ativo = {self.db.PARAM}
+                    AND pci.Data_Inicio <= {self.db.PARAM}
+                    AND (pci.Data_Fim IS NULL OR pci.Data_Fim >= {self.db.PARAM})
+                )
+            )"""
+            # Adicionamos os parâmetros: user_id (2x), True, now (2x)
+            from datetime import datetime
+            now = datetime.now()
+            params.extend([user_id, user_id, True, now, now])
             
         order_clause = f"ORDER BY {self.db.ISNULL}(Gru.Gru_Nome, Con.Con_Nome), Con.Con_Nome"
         query = f"{base_query} {where_clause} {order_clause}"
-        
         try:
             with self.db.get_cursor() as cursor:
                 if not cursor:
@@ -170,6 +192,68 @@ class ConnectionRepository(BaseRepository):
                 return False, "Erro: Conexão referenciada em outra tabela."
             return False, f"Erro DB: {e}"
         except Exception as ex:
-             conn.rollback()
-             logging.error(f"Admin: Erro inesperado ao DELETAR conexão {con_id}: {ex}")
-             return False, f"Erro: {ex}"
+            conn.rollback()
+            logging.error(f"Admin: Erro inesperado ao DELETAR conexão {con_id}: {ex}")
+            return False, f"Erro: {ex}"
+
+    # ========== MÉTODOS PARA PERMISSÕES INDIVIDUAIS ==========
+
+    def grant_individual_access(self, user_id: int, connection_id: int, granted_by_user_id: int, 
+                              observations: str = None) -> Tuple[bool, str]:
+        """Concede acesso individual permanente a uma conexão."""
+        return self.individual_perm_repo.grant_individual_access(
+            user_id, connection_id, granted_by_user_id, observations=observations
+        )
+
+    def revoke_individual_access(self, user_id: int, connection_id: int) -> Tuple[bool, str]:
+        """Revoga acesso individual a uma conexão."""
+        return self.individual_perm_repo.revoke_individual_access(user_id, connection_id)
+
+    def list_user_individual_permissions(self, user_id: int) -> List[Dict[str, Any]]:
+        """Lista permissões individuais de um usuário."""
+        return self.individual_perm_repo.list_user_individual_permissions(user_id)
+
+    def list_connection_individual_permissions(self, connection_id: int) -> List[Dict[str, Any]]:
+        """Lista usuários com acesso individual a uma conexão."""
+        return self.individual_perm_repo.list_connection_individual_permissions(connection_id)
+
+    def has_individual_access(self, user_id: int, connection_id: int) -> bool:
+        """Verifica se usuário tem acesso individual a uma conexão."""
+        return self.individual_perm_repo.has_individual_access(user_id, connection_id)
+
+    def get_available_connections_for_individual_grant(self) -> List[Tuple]:
+        """Retorna todas as conexões disponíveis para concessão individual."""
+        query = f"""
+            SELECT c.Con_Codigo, c.Con_Nome, c.Con_IP, g.Gru_Nome, c.con_tipo
+            FROM Conexao_WTS c 
+            LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo 
+            WHERE c.Gru_Codigo <> 33
+            ORDER BY {self.db.ISNULL}(g.Gru_Nome, c.Con_Nome), c.Con_Nome
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                if not cursor:
+                    raise DatabaseConnectionError("Falha ao obter cursor.")
+                cursor.execute(query)
+                return cursor.fetchall()
+        except self.driver_module.Error as e:
+            logging.error(f"Erro ao buscar conexões disponíveis: {e}")
+            raise DatabaseQueryError(f"Erro ao buscar conexões: {e}")
+
+    def get_available_users_for_individual_grant(self) -> List[Tuple]:
+        """Retorna todos os usuários disponíveis para concessão individual."""
+        query = f"""
+            SELECT Usu_Id, Usu_Nome, Usu_Is_Admin
+            FROM Usuario_Sistema_WTS 
+            WHERE Usu_Ativo = {self.db.PARAM}
+            ORDER BY Usu_Nome
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                if not cursor:
+                    raise DatabaseConnectionError("Falha ao obter cursor.")
+                cursor.execute(query, (True,))
+                return cursor.fetchall()
+        except self.driver_module.Error as e:
+            logging.error(f"Erro ao buscar usuários disponíveis: {e}")
+            raise DatabaseQueryError(f"Erro ao buscar usuários: {e}")

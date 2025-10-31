@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_all
 import os
 
-datas = [('assets', 'assets'), ('config/config.json', '.'), ('config/.env', '.'), ('wats_settings.json', '.')]
+datas = [('assets', 'assets'), ('config.json', '.'), ('config/config.json', '.'), ('config/.env', '.'), ('wats_settings.json', '.')]
 binaries = []
 hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'dotenv', 'mss', 'psutil']
 
@@ -67,6 +67,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    [('config.json', 'config.json', 'DATA')],  # Copia config.json para a raiz da distribuição
     strip=False,
     upx=True,
     upx_exclude=[],

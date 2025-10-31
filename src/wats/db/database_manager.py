@@ -21,6 +21,7 @@ class DatabaseManager:
         
         # Propriedades de Dialeto SQL
         self.NOW: str = ""
+        self.CURRENT_TIMESTAMP: str = "getdate()"  # Alias para NOW
         self.PARAM: str = "" # Placeholder (e.g., ? ou %s)
         self.ISNULL: str = ""
         self.IDENTITY_QUERY: str = ""
@@ -47,6 +48,7 @@ class DatabaseManager:
     def _configure_demo_mode(self):
         """Configura valores padrão para modo demo."""
         self.NOW = "NOW()"
+        self.CURRENT_TIMESTAMP = "NOW()"
         self.PARAM = "?"
         self.ISNULL = "ISNULL"
         self.IDENTITY_QUERY = "SELECT 1 AS ID;"
@@ -69,6 +71,7 @@ class DatabaseManager:
         )
         # Dialeto SQL Server
         self.NOW = "GETDATE()"
+        self.CURRENT_TIMESTAMP = "GETDATE()"
         self.PARAM = "?"
         self.ISNULL = "ISNULL"
         self.IDENTITY_QUERY = "SELECT @@IDENTITY AS ID;"
@@ -86,6 +89,7 @@ class DatabaseManager:
         
         # Dialeto SQLite
         self.NOW = "datetime('now')"
+        self.CURRENT_TIMESTAMP = "datetime('now')"
         self.PARAM = "?"
         self.ISNULL = "IFNULL"
         self.IDENTITY_QUERY = "SELECT last_insert_rowid() AS ID;" 

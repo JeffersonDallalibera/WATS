@@ -3,14 +3,14 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any, Set
 from src.wats.db.repositories.base_repository import BaseRepository
 from src.wats.db.exceptions import DatabaseQueryError, DatabaseConnectionError
-from src.wats.db.demo_adapter import DemoAdapter
+
 
 class UserRepository(BaseRepository):
     """Gerencia operações de Usuários e Permissões."""
     
     def __init__(self, db_manager):
         super().__init__(db_manager)
-        self.demo_adapter = DemoAdapter(db_manager)
+        
 
     def get_user_role(self, username: str) -> Tuple[Optional[int], bool]:
         # --- CORREÇÃO: "1" foi trocado por um parâmetro {self.db.PARAM} ---
@@ -35,16 +35,6 @@ class UserRepository(BaseRepository):
         return None, False
 
     def get_admin_password_hash(self) -> Optional[str]:
-        # Em modo demo, retorna hash MD5 da senha "admin123"
-        mock_result = self.demo_adapter.execute_with_fallback(
-            "get_admin_password_hash", 
-            "get_admin_password_hash"
-        )
-        
-        if mock_result is not None:
-            # Hash MD5 de "admin123" para modo demo
-            return "0192023a7bbd73250516f069df18b500"
-        
         # Código original do banco de dados
         query = f"SELECT Cfg_Valor FROM Config_Sistema_WTS WHERE Cfg_Chave = {self.db.PARAM}"
         
@@ -61,17 +51,6 @@ class UserRepository(BaseRepository):
         return None
 
     def admin_get_all_users(self) -> List[Tuple]:
-        # Tenta usar mock service se necessário
-        mock_result = self.demo_adapter.execute_with_fallback(
-            "admin_get_all_users", 
-            "get_all_users"
-        )
-        
-        if mock_result is not None:
-            # Converte dados mock para formato esperado pela interface
-            return [(user['id'], user['username'], user['status'] == 'active', user['is_admin']) 
-                   for user in mock_result]
-        
         # Código original do banco de dados
         query = "SELECT Usu_Id, Usu_Nome, Usu_Ativo, Usu_Is_Admin FROM Usuario_Sistema_WTS ORDER BY Usu_Nome"
         
@@ -89,23 +68,6 @@ class UserRepository(BaseRepository):
         return []
 
     def admin_get_user_details(self, user_id: int) -> Optional[Dict[str, Any]]:
-        # Tenta usar mock service se necessário
-        mock_result = self.demo_adapter.execute_with_fallback(
-            "admin_get_user_details", 
-            "get_user_by_id",
-            user_id
-        )
-        
-        if mock_result is not None:
-            # Converte dados mock para formato esperado
-            return {
-                "nome": mock_result['username'],
-                "email": mock_result['email'],
-                "is_active": mock_result['status'] == 'active',
-                "is_admin": mock_result['is_admin'],
-                "grupos": set()  # Mock não tem grupos por enquanto
-            }
-        
         # Código original do banco de dados
         query_user = f"SELECT Usu_Nome, Usu_Email, Usu_Ativo, Usu_Is_Admin FROM Usuario_Sistema_WTS WHERE Usu_Id = {self.db.PARAM}"
         query_groups = f"SELECT Gru_Codigo FROM Permissao_Grupo_WTS WHERE Usu_Id = {self.db.PARAM}"

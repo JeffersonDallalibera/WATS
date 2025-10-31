@@ -11,7 +11,7 @@
     "enabled": true,
     "auto_start": true,
     "mode": "rdp_window",
-    "output_dir": "C:/Users/jefferson.dallaliber/Videos/Wats",
+    "output_dir": "{USERPROFILE}/Videos/Wats",
     "fps": 10,
     "quality": 23,
     "resolution_scale": 1.0,
@@ -62,7 +62,59 @@
     "max_file_age_days": 30
   },
   "application": {
-    "log_level": "DEBUG",
-    "theme": "Dark"
+    "log_level": "INFO",
+    "theme": "Dark",
+    "auto_consent": false,
+    "window_title": "WATS - Sistema de Gravação RDP",
+    "window_geometry": "1200x800",
+    "window_resizable": true,
+    "minimize_to_tray": true,
+    "start_minimized": false,
+    "check_updates": true,
+    "language": "pt-BR",
+    "monitor": 1
+  },
+  "rdp": {
+    "maximize_window": false,
+    "window_mode": "fullscreen",
+    "allow_window_override": true,
+    "fullscreen": true,
+    "default_width": 1024,
+    "default_height": 768
+  },
+  "ui": {
+    "show_fps_counter": false,
+    "show_recording_status": true,
+    "notification_enabled": true,
+    "sound_notifications": false,
+    "toast_duration_seconds": 3,
+    "confirm_exit": true,
+    "remember_window_position": true,
+    "dark_mode": true
+  },
+  "security": {
+    "encrypt_recordings": false,
+    "encryption_key": "",
+    "require_password": false,
+    "session_timeout_minutes": 0,
+    "audit_log_enabled": true,
+    "restrict_file_access": false
+  },
+  "performance": {
+    "max_cpu_usage_percent": 80,
+    "memory_limit_mb": 1024,
+    "disk_space_check_enabled": true,
+    "min_free_space_gb": 5,
+    "background_cleanup_enabled": true,
+    "optimize_for_battery": false
+  },
+  "network": {
+    "proxy_enabled": false,
+    "proxy_host": "",
+    "proxy_port": "",
+    "proxy_username": "",
+    "proxy_password": "",
+    "connection_timeout": 30,
+    "retry_attempts": 3
   }
 }
