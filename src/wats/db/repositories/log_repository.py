@@ -3,15 +3,14 @@ import logging
 from typing import Optional
 from src.wats.db.repositories.base_repository import BaseRepository
 from src.wats.db.exceptions import DatabaseQueryError, DatabaseConnectionError
-from src.wats.db.demo_adapter import DemoAdapter
+
 
 class LogRepository(BaseRepository):
     """Gerencia operações de Log (Usuario_Conexao_WTS e Log_Acesso_WTS)."""
     
     def __init__(self, db_manager):
         super().__init__(db_manager)
-        self.demo_adapter = DemoAdapter(db_manager)
-
+    
     def insert_connection_log(self, con_codigo: int, username: str, ip: str, computer_name: str, user_name: str) -> bool:
         # Dialeto: GETDATE() -> self.db.NOW
         query = f"""
@@ -56,10 +55,6 @@ class LogRepository(BaseRepository):
         return False
 
     def cleanup_ghost_connections(self):
-        # Em modo demo, simula cleanup bem-sucedido
-        if self.demo_adapter.should_use_mock():
-            logging.info("[DEMO] Cleanup de conexões fantasma simulado - OK")
-            return
         
         # Dialeto: Procedimento específico
         query = ""

@@ -348,7 +348,7 @@ class FilterableTreeFrame(ctk.CTkFrame):
         current_filter = self.filter_var.get().strip().lower()
         if current_filter:
             # Reaplica o filtro aos novos dados
-            self._apply_filter()
+            self._apply_filter(current_filter)
         else:
             # Sem filtro, mostra todos os dados
             self.filtered_data = data.copy()

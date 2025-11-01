@@ -380,7 +380,7 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
         else:
             self.title("🔒 Sessão Protegida")
         
-        self.geometry("450x350")
+        self.geometry("630x480")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -540,14 +540,14 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
                 self.requesting_user
             )
             
-            if validation["valid"]:
+            if validation.get("valid"):
                 # Senha correta
                 logging.info(f"Senha de proteção validada para {self.requesting_user} no servidor {self.connection_data.get('title')}")
                 
                 self.result = {
                     "validated": True,
                     "password": password,
-                    "protection_data": validation["protection_data"]
+                    "protection_data": validation.get("protection_data")
                 }
                 
                 messagebox.showinfo(
@@ -558,8 +558,9 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
                 self.destroy()
                 
             else:
-                # Senha incorreta
-                messagebox.showerror("Senha Incorreta", validation["reason"])
+                # Senha incorreta - tenta diferentes chaves para a mensagem de erro
+                error_message = validation.get("reason") or validation.get("message") or "Falha na validação da senha"
+                messagebox.showerror("Senha Incorreta", error_message)
                 self.password_entry.delete(0, "end")
                 self.password_entry.focus()
                 
@@ -590,19 +591,41 @@ class SessionProtectionManager:
     """
     
     def __init__(self, db_service=None):
+        import uuid
+        self.instance_id = str(uuid.uuid4())[:8]  # ID único para debug
         self.db_service = db_service
         self.session_repo = None
+        self.current_user_protections = set()  # Rastreia proteções criadas pelo usuário atual
+        
+        logging.info(f"[SESSION_PROTECTION_INIT] Inicializando SessionProtectionManager ID:{self.instance_id}")
+        logging.info(f"[SESSION_PROTECTION_INIT] db_service fornecido: {db_service is not None}")
+        
         if self.db_service:
             try:
+                logging.info(f"[SESSION_PROTECTION_INIT] Tentando importar SessionProtectionRepository...")
                 from src.wats.db.repositories.session_protection_repository import SessionProtectionRepository
+                logging.info(f"[SESSION_PROTECTION_INIT] Import bem-sucedido, criando repositório...")
+                logging.info(f"[SESSION_PROTECTION_INIT] db_service.db_manager: {hasattr(self.db_service, 'db_manager')}")
+                
                 self.session_repo = SessionProtectionRepository(self.db_service.db_manager)
-            except ImportError:
+                logging.info(f"[SESSION_PROTECTION_INIT] SessionProtectionRepository criado com sucesso!")
+                logging.info(f"[SESSION_PROTECTION_INIT] session_repo: {self.session_repo is not None}")
+                
+            except ImportError as e:
+                logging.warning(f"[SESSION_PROTECTION_INIT] ImportError: {e}")
                 logging.warning("SessionProtectionRepository não encontrado, usando modo local")
+            except Exception as e:
+                logging.error(f"[SESSION_PROTECTION_INIT] Erro inesperado ao criar repositório: {e}")
+                logging.error(f"[SESSION_PROTECTION_INIT] Tipo de erro: {type(e).__name__}")
+        else:
+            logging.warning(f"[SESSION_PROTECTION_INIT] db_service não fornecido, usando modo local")
         
         # Fallback para modo local (testes e compatibilidade)
         self.protected_sessions: Dict[int, Dict[str, Any]] = {}
         self.cleanup_interval = 300  # 5 minutos
         self.last_cleanup = time.time()
+        
+        logging.info(f"[SESSION_PROTECTION_INIT] Inicialização concluída - session_repo ativo: {self.session_repo is not None}")
 
     def activate_session_protection(self, connection_id: int, password: str, protection_data: Dict[str, Any]):
         """Ativa proteção para uma sessão no servidor."""
@@ -633,6 +656,9 @@ class SessionProtectionManager:
                 
                 if success:
                     logging.info(f"[SESSION_PROTECTION] ✅ Proteção criada no servidor - ID: {protection_id}, Conexão: {connection_id}")
+                    # Rastreia a proteção criada pelo usuário atual
+                    self.current_user_protections.add(connection_id)
+                    logging.info(f"[SESSION_PROTECTION] Proteção {connection_id} adicionada ao rastreamento do usuário {user_name}")
                     return True
                 else:
                     logging.error(f"[SESSION_PROTECTION] ❌ Falha ao criar proteção no servidor: {message}")
@@ -651,31 +677,88 @@ class SessionProtectionManager:
             "created_at": datetime.now().isoformat()
         }
         
+        # Rastreia a proteção criada pelo usuário atual
+        self.current_user_protections.add(connection_id)
+        logging.info(f"[SESSION_PROTECTION] Proteção {connection_id} adicionada ao rastreamento local do usuário {protection_data.get('protected_by')}")
+        
         logging.info(f"[SESSION_PROTECTION] 🔧 Proteção ativada localmente para conexão {connection_id} por {protection_data.get('protected_by')}")
         return True
 
     def is_session_protected(self, connection_id: int) -> bool:
         """Verifica se uma sessão está protegida (servidor ou local)."""
+        logging.info(f"[SESSION_PROTECTION_CHECK] ID:{self.instance_id} Verificando proteção para conexão {connection_id}")
+        logging.info(f"[SESSION_PROTECTION_CHECK] ID:{self.instance_id} session_repo disponível: {self.session_repo is not None}")
+        logging.info(f"[SESSION_PROTECTION_CHECK] ID:{self.instance_id} db_service disponível: {self.db_service is not None}")
+        
+        if self.db_service:
+            logging.info(f"[SESSION_PROTECTION_CHECK] db_service.db_manager: {hasattr(self.db_service, 'db_manager')}")
+            if hasattr(self.db_service, 'db_manager'):
+                logging.info(f"[SESSION_PROTECTION_CHECK] db_manager tipo: {type(self.db_service.db_manager).__name__}")
+        
+        # Se session_repo é None mas db_service existe, tenta recriar
+        if self.db_service and self.session_repo is None:
+            logging.warning(f"[SESSION_PROTECTION_CHECK] session_repo é None mas db_service existe, tentando recriar...")
+            try:
+                from src.wats.db.repositories.session_protection_repository import SessionProtectionRepository
+                self.session_repo = SessionProtectionRepository(self.db_service.db_manager)
+                logging.info(f"[SESSION_PROTECTION_CHECK] session_repo recriado com sucesso!")
+            except Exception as e:
+                logging.error(f"[SESSION_PROTECTION_CHECK] Falha ao recriar session_repo: {e}")
         
         # Verifica no servidor primeiro
         if self.session_repo:
             try:
-                protections = self.session_repo.get_active_protections_by_connection(connection_id)
-                if protections:
-                    return True
+                logging.info(f"[SESSION_PROTECTION_CHECK] Chamando session_repo.is_session_protected({connection_id})")
+                is_protected, protection_info = self.session_repo.is_session_protected(connection_id)
+                logging.info(f"[SESSION_PROTECTION_CHECK] Resultado do servidor: is_protected={is_protected}, protection_info={protection_info is not None}")
+                return is_protected
             except Exception as e:
-                logging.error(f"Erro ao verificar proteção no servidor: {e}")
+                logging.error(f"[SESSION_PROTECTION_CHECK] Erro ao verificar proteção no servidor: {e}")
+                logging.error(f"[SESSION_PROTECTION_CHECK] Tipo de erro: {type(e).__name__}")
+                import traceback
+                logging.error(f"[SESSION_PROTECTION_CHECK] Stack trace: {traceback.format_exc()}")
+        else:
+            logging.warning(f"[SESSION_PROTECTION_CHECK] session_repo não disponível, usando fallback local")
         
         # Verifica localmente (fallback)
         self._cleanup_expired_protections()
-        return connection_id in self.protected_sessions
+        local_protected = connection_id in self.protected_sessions
+        logging.info(f"[SESSION_PROTECTION_CHECK] Verificação local: {local_protected}")
+        return local_protected
 
     def get_session_protection_info(self, connection_id: int) -> Optional[Dict[str, Any]]:
         """Retorna informações da proteção ativa."""
-        self._cleanup_expired_protections()
         
+        logging.info(f"[SESSION_PROTECTION_INFO] Obtendo informações para conexão {connection_id}")
+        logging.info(f"[SESSION_PROTECTION_INFO] session_repo disponível: {self.session_repo is not None}")
+        
+        # Se session_repo é None mas db_service existe, tenta recriar
+        if self.db_service and self.session_repo is None:
+            logging.warning(f"[SESSION_PROTECTION_INFO] session_repo é None mas db_service existe, tentando recriar...")
+            try:
+                from src.wats.db.repositories.session_protection_repository import SessionProtectionRepository
+                self.session_repo = SessionProtectionRepository(self.db_service.db_manager)
+                logging.info(f"[SESSION_PROTECTION_INFO] session_repo recriado com sucesso!")
+            except Exception as e:
+                logging.error(f"[SESSION_PROTECTION_INFO] Falha ao recriar session_repo: {e}")
+        
+        # Verifica no servidor primeiro
+        if self.session_repo:
+            try:
+                is_protected, protection_info = self.session_repo.is_session_protected(connection_id)
+                if is_protected and protection_info:
+                    logging.info(f"[SESSION_PROTECTION_INFO] Informações obtidas do servidor")
+                    return protection_info
+            except Exception as e:
+                logging.error(f"[SESSION_PROTECTION_INFO] Erro ao obter informações de proteção no servidor: {e}")
+        
+        # Verifica localmente (fallback)
+        self._cleanup_expired_protections()
         if connection_id in self.protected_sessions:
+            logging.info(f"[SESSION_PROTECTION_INFO] Informações obtidas localmente")
             return self.protected_sessions[connection_id]["protection_data"]
+        
+        logging.info(f"[SESSION_PROTECTION_INFO] Nenhuma proteção encontrada para conexão {connection_id}")
         return None
 
     def validate_session_password(self, connection_id: int, password: str, requesting_user: str) -> Dict[str, Any]:
@@ -703,14 +786,25 @@ class SessionProtectionManager:
                 
                 if result.get("valid"):
                     logging.info(f"🔓 ACESSO AUTORIZADO VIA SERVIDOR - Usuário: {requesting_user} | Conexão: {connection_id}")
+                    return result
                 else:
-                    logging.warning(f"🔒 ACESSO NEGADO VIA SERVIDOR - Usuário: {requesting_user} | Razão: {result.get('message')}")
-                
-                return result
+                    # Padroniza a mensagem de erro para usar "reason"
+                    error_message = result.get('message') or result.get('reason') or "Falha na validação da senha"
+                    logging.warning(f"🔒 ACESSO NEGADO VIA SERVIDOR - Usuário: {requesting_user} | Razão: {error_message}")
+                    return {
+                        "valid": False,
+                        "reason": error_message,
+                        "message": error_message  # Mantém compatibilidade
+                    }
                 
             except Exception as e:
                 logging.error(f"Erro ao validar senha no servidor: {e}")
-                # Fallback para modo local
+                # Retorna erro padronizado para fallback local
+                return {
+                    "valid": False,
+                    "reason": f"Erro no banco de dados: {e}",
+                    "message": f"Erro no banco de dados: {e}"
+                }
         
         # Validação local (fallback)
         self._cleanup_expired_protections()
@@ -755,6 +849,9 @@ class SessionProtectionManager:
                 
                 if success:
                     logging.info(f"Proteção removida do servidor - Conexão: {connection_id} por {user}")
+                    # Remove do rastreamento
+                    self.current_user_protections.discard(connection_id)
+                    logging.info(f"[SESSION_PROTECTION] Proteção {connection_id} removida do rastreamento")
                     return True
                 else:
                     logging.warning(f"Falha ao remover proteção do servidor: {message}")
@@ -778,6 +875,10 @@ class SessionProtectionManager:
             
             # Remove a proteção
             del self.protected_sessions[connection_id]
+            
+            # Remove do rastreamento
+            self.current_user_protections.discard(connection_id)
+            logging.info(f"[SESSION_PROTECTION] Proteção {connection_id} removida do rastreamento local")
             
             logging.info(f"Proteção removida localmente da conexão {connection_id} por {user}")
             return True
@@ -850,8 +951,85 @@ class SessionProtectionManager:
         """Remove todas as proteções (para shutdown)."""
         count = len(self.protected_sessions)
         self.protected_sessions.clear()
+        self.current_user_protections.clear()
         if count > 0:
             logging.info(f"Limpeza completa: {count} proteções de sessão removidas")
+
+    def cleanup_current_user_protections(self, current_user: str = None, show_notification: bool = True):
+        """Remove todas as proteções criadas pelo usuário atual ao sair da sessão."""
+        try:
+            if not current_user:
+                # Tenta obter o usuário atual de diferentes formas
+                import os
+                import getpass
+                current_user = (
+                    os.getenv('USERNAME') or 
+                    os.getenv('USER') or 
+                    getpass.getuser() or 
+                    'unknown'
+                )
+            
+            logging.info(f"🔒 LOGOUT INICIADO: Limpando proteções do usuário {current_user}")
+            removed_count = 0
+            removed_servers = []
+            
+            # Remove do servidor primeiro (se disponível)
+            if self.session_repo:
+                try:
+                    # Busca e remove proteções do usuário atual no servidor
+                    success, message = self.session_repo.remove_user_protections(current_user)
+                    if success:
+                        logging.info(f"🔒 LOGOUT: Proteções do usuário {current_user} removidas do servidor - {message}")
+                    else:
+                        logging.warning(f"Aviso ao remover proteções do servidor: {message}")
+                except Exception as e:
+                    logging.error(f"Erro ao remover proteções do servidor durante logout: {e}")
+            
+            # Remove proteções locais criadas pelo usuário atual
+            protections_to_remove = []
+            for connection_id in list(self.current_user_protections):
+                if connection_id in self.protected_sessions:
+                    protection_data = self.protected_sessions[connection_id]["protection_data"]
+                    if protection_data.get("protected_by") == current_user:
+                        protections_to_remove.append(connection_id)
+                        removed_servers.append(protection_data.get('connection_name', f'Conexão {connection_id}'))
+            
+            for connection_id in protections_to_remove:
+                protection_data = self.protected_sessions[connection_id]["protection_data"]
+                logging.info(f"🔒 LOGOUT: Removendo proteção local - Servidor: {protection_data.get('connection_name')} | Criada por: {protection_data.get('protected_by')}")
+                del self.protected_sessions[connection_id]
+                self.current_user_protections.discard(connection_id)
+                removed_count += 1
+            
+            if removed_count > 0:
+                servers_text = ", ".join(removed_servers[:3])  # Mostra até 3 servidores
+                if len(removed_servers) > 3:
+                    servers_text += f" e mais {len(removed_servers) - 3} servidor(es)"
+                
+                logging.info(f"🔒 LOGOUT COMPLETO: {removed_count} proteções do usuário {current_user} removidas automaticamente")
+                logging.info(f"🔒 SERVIDORES LIBERADOS: {servers_text}")
+                
+                # Mostra notificação apenas se solicitado e há uma interface gráfica ativa
+                if show_notification:
+                    try:
+                        from tkinter import messagebox
+                        messagebox.showinfo(
+                            "Proteções Removidas",
+                            f"🔒 {removed_count} proteção(ões) de sessão removida(s) automaticamente:\n\n"
+                            f"Servidores liberados:\n{servers_text}\n\n"
+                            f"✅ Outros usuários podem agora acessar estes servidores sem senha."
+                        )
+                    except:
+                        # Se não há interface gráfica disponível, só registra no log
+                        pass
+            else:
+                logging.info(f"🔒 LOGOUT: Nenhuma proteção ativa encontrada para o usuário {current_user}")
+                
+            return removed_count
+            
+        except Exception as e:
+            logging.error(f"Erro na limpeza de proteções do usuário atual: {e}")
+            return 0
 
     def cleanup_orphaned_protections(self):
         """Remove proteções órfãs (usuários desconectados)."""
@@ -892,4 +1070,18 @@ session_protection_manager = SessionProtectionManager()
 def configure_session_protection_with_db(db_service):
     """Configura o gerenciador com acesso ao banco de dados."""
     global session_protection_manager
+    
+    logging.info(f"[CONFIGURE_SESSION_PROTECTION] Configurando session_protection_manager com db_service")
+    logging.info(f"[CONFIGURE_SESSION_PROTECTION] db_service fornecido: {db_service is not None}")
+    
+    if db_service:
+        logging.info(f"[CONFIGURE_SESSION_PROTECTION] Tipo do db_service: {type(db_service).__name__}")
+        logging.info(f"[CONFIGURE_SESSION_PROTECTION] db_service tem db_manager: {hasattr(db_service, 'db_manager')}")
+        
+        if hasattr(db_service, 'db_manager'):
+            logging.info(f"[CONFIGURE_SESSION_PROTECTION] db_manager tipo: {type(db_service.db_manager).__name__}")
+    
     session_protection_manager = SessionProtectionManager(db_service)
+    
+    logging.info(f"[CONFIGURE_SESSION_PROTECTION] Novo session_protection_manager criado")
+    logging.info(f"[CONFIGURE_SESSION_PROTECTION] session_repo ativo: {session_protection_manager.session_repo is not None}")

@@ -12,7 +12,7 @@ import json
 from threading import Thread, Event
 from typing import Dict, Any, List, Optional, Set, Tuple
 
-from .config import ASSETS_DIR, FILTER_PLACEHOLDER, BASE_DIR, USER_DATA_DIR, is_demo_mode
+from .config import ASSETS_DIR, FILTER_PLACEHOLDER, BASE_DIR, USER_DATA_DIR, is_demo_mode, get_app_config
 from .db.db_service import DBService
 from .db.exceptions import DatabaseError
 from .dialogs import ClientSelectorDialog
@@ -39,12 +39,24 @@ else:
             pass
 
 try:
-    from .session_protection import CreateSessionProtectionDialog, ValidateSessionPasswordDialog, session_protection_manager
-except ImportError:
+    from .session_protection import CreateSessionProtectionDialog, ValidateSessionPasswordDialog
+    # Não importamos session_protection_manager aqui - sempre buscaremos a instância atual
+    logging.info(f"[IMPORT_DEBUG] session_protection classes import bem-sucedido")
+    session_protection_manager = None  # Será sempre buscado dinamicamente
+except ImportError as e:
     # Fallback se não encontrar o módulo
+    logging.error(f"[IMPORT_DEBUG] ImportError ao importar session_protection: {e}")
     CreateSessionProtectionDialog = None
     ValidateSessionPasswordDialog = None
     session_protection_manager = None
+
+def get_current_session_protection_manager():
+    """Retorna a instância atual do session_protection_manager."""
+    try:
+        from .session_protection import session_protection_manager
+        return session_protection_manager
+    except ImportError:
+        return None
 
 # Define uma estrutura para facilitar a comparação
 class ConnectionData:
@@ -262,7 +274,9 @@ class Application(ctk.CTk):
 
         # Start DB initialization in background; when DB is ready it will start the
         # initial data load in its own background thread.
+        logging.info("[CONFIG_DEBUG] Iniciando thread de inicialização do DB...")
         Thread(target=self._init_db_and_start, daemon=True).start()
+        logging.info("[CONFIG_DEBUG] Thread de inicialização do DB iniciada")
 
     def _init_db_and_start(self):
         """Initialize DBService in a background thread and then start the
@@ -270,6 +284,7 @@ class Application(ctk.CTk):
         marshalled to the main thread via `after`.
         """
         logging.info("Background DB initialization starting...")
+        logging.info("[CONFIG_DEBUG] Função _init_db_and_start iniciada")
         
         # Resolve IP address in background to avoid blocking startup
         try:
@@ -282,15 +297,44 @@ class Application(ctk.CTk):
         try:
             self.db = DBService(self.settings)
             logging.info("DBService initialized successfully in background.")
+            logging.info(f"[CONFIG_DEBUG] self.db criado: {self.db is not None}")
+            logging.info(f"[CONFIG_DEBUG] type(self.db): {type(self.db).__name__}")
             
             # Configura o sistema de proteção de sessão com acesso ao DB
-            if CreateSessionProtectionDialog and session_protection_manager:
+            try:
+                logging.info("[CONFIG_DEBUG] Iniciando configuração do sistema de proteção...")
+                
+                # Tenta fazer import direto primeiro
                 try:
+                    from src.wats.session_protection import configure_session_protection_with_db
+                    logging.info("[CONFIG_DEBUG] Import direto realizado com sucesso")
+                except ImportError:
+                    logging.info("[CONFIG_DEBUG] Import direto falhou, tentando import relativo...")
                     from .session_protection import configure_session_protection_with_db
-                    configure_session_protection_with_db(self.db)
-                    logging.info("Sistema de proteção de sessão configurado com validação no servidor")
-                except Exception as e:
-                    logging.warning(f"Falha ao configurar proteção de sessão: {e}")
+                    logging.info("[CONFIG_DEBUG] Import relativo realizado com sucesso")
+                
+                logging.info("[CONFIG_DEBUG] Chamando configure_session_protection_with_db...")
+                configure_session_protection_with_db(self.db)
+                logging.info("Sistema de proteção de sessão configurado com validação no servidor")
+                logging.info("[CONFIG_DEBUG] Configuração do sistema de proteção concluída com sucesso")
+                
+                # Verifica se a configuração foi aplicada corretamente
+                try:
+                    from src.wats.session_protection import session_protection_manager
+                    logging.info(f"[CONFIG_DEBUG] session_protection_manager existe: {session_protection_manager is not None}")
+                    if session_protection_manager:
+                        logging.info(f"[CONFIG_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}")
+                        logging.info(f"[CONFIG_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}")
+                except ImportError:
+                    from .session_protection import session_protection_manager
+                    logging.info(f"[CONFIG_DEBUG] session_protection_manager existe: {session_protection_manager is not None}")
+                    if session_protection_manager:
+                        logging.info(f"[CONFIG_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}")
+                        logging.info(f"[CONFIG_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}")
+                
+            except Exception as e:
+                logging.warning(f"Falha ao configurar proteção de sessão: {e}")
+                logging.error(f"[CONFIG_DEBUG] Erro detalhado na configuração: {e}", exc_info=True)
             
             # Initialize recording manager
             self.recording_manager = RecordingManager(self.settings)
@@ -318,7 +362,12 @@ class Application(ctk.CTk):
 
     def _configure_window(self):
         """Configura a janela principal."""
-        self.title(f"WATS V4.2 - 2025 ({self.user_session_name})") 
+        # Carrega configurações da aplicação
+        app_config = get_app_config()
+        window_title = app_config.get('window_title', 'WATS - Sistema de Gravação RDP')
+        
+        # Define o título com o nome da sessão do usuário
+        self.title(f"{window_title} ({self.user_session_name})") 
         self.geometry("800x650")
         self.minsize(700, 500)
         
@@ -478,7 +527,8 @@ class Application(ctk.CTk):
         self.context_menu.add_command(label='🖥️ Usar WTS Nativo (mstsc)', command=self._connect_native_wts)
         
         # Adiciona opções de proteção de sessão
-        if CreateSessionProtectionDialog and session_protection_manager:
+        current_session_manager = get_current_session_protection_manager()
+        if CreateSessionProtectionDialog and current_session_manager:
             self.context_menu.add_separator()
             self.context_menu.add_command(label='🔒 Proteger Sessão', command=self._protect_session)
             self.context_menu.add_command(label='🔓 Remover Proteção', command=self._remove_session_protection)
@@ -766,8 +816,44 @@ class Application(ctk.CTk):
         data = self._get_selected_item_data()
         if not data: return
 
-        if data.get('username') and column != '#2':
-            # Oferece opções para conexão em uso
+        # 🔒 VERIFICAÇÃO PRIORITÁRIA DE PROTEÇÃO DE SESSÃO
+        con_codigo = data.get('db_id')
+        session_protection_manager = get_current_session_protection_manager()
+        
+        if session_protection_manager and session_protection_manager.is_session_protected(con_codigo):
+            # Sessão protegida - vai diretamente para validação de senha
+            logging.info(f"[PROTECTION_ACCESS] Sessão {con_codigo} protegida, solicitando senha")
+            protection_info = session_protection_manager.get_session_protection_info(con_codigo)
+            protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
+            
+            # Mostra diálogo de validação de senha
+            validation_dialog = ValidateSessionPasswordDialog(
+                parent=self,
+                connection_data=data,
+                requesting_user=self.user_session_name,
+                protected_by=protected_by
+            )
+            
+            # Aguarda resultado da validação
+            validation_dialog.wait_window()
+            result = validation_dialog.get_result()
+            
+            if not result or not result.get("validated"):
+                # Acesso negado - não prossegue
+                logging.warning(f"🔒 Acesso negado para {self.user_session_name} ao servidor protegido {data.get('title')}")
+                messagebox.showwarning(
+                    "Acesso Negado", 
+                    f"Não foi possível acessar o servidor '{data.get('title')}'.\n\n"
+                    "A sessão está protegida e você não forneceu a senha correta."
+                )
+                return
+            
+            # Acesso autorizado - prossegue com a conexão
+            logging.info(f"🔓 Acesso autorizado para {self.user_session_name} ao servidor protegido {data.get('title')}")
+            # Continua para executar a conexão normalmente
+        
+        elif data.get('username') and column != '#2':
+            # Conexão em uso mas SEM proteção - oferece opções colaborativas
             choice = self._show_connection_in_use_dialog(data)
             if choice == "cancel":
                 return
@@ -933,53 +1019,59 @@ class Application(ctk.CTk):
                 self.after(0, self._populate_tree)
     
     def _connect_rdp(self, data: Dict[str, Any]):
-        """Conecta usando RDP multiplataforma."""
-        from .utils.rdp_connector import rdp_connector
+        """Conecta usando o executável rdp.exe customizado."""
         
-        # 🔒 VERIFICAÇÃO DE PROTEÇÃO DE SESSÃO
-        if session_protection_manager and session_protection_manager.is_session_protected(data.get('db_id')):
-            # Sessão protegida - precisa de validação
-            protection_info = session_protection_manager.get_session_protection_info(data.get('db_id'))
-            protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
-            
-            # Mostra diálogo de validação de senha
-            validation_dialog = ValidateSessionPasswordDialog(
-                parent=self,
-                connection_data=data,
-                requesting_user=self.user_session_name,
-                protected_by=protected_by
-            )
-            
-            # Aguarda resultado da validação
-            validation_dialog.wait_window()
-            result = validation_dialog.get_result()
-            
-            if not result or not result.get("validated"):
-                # Acesso negado - não prossegue com a conexão
-                logging.warning(f"🔒 Acesso negado para {self.user_session_name} ao servidor {data.get('title')}")
-                messagebox.showwarning(
-                    "Acesso Negado", 
-                    f"Não foi possível acessar o servidor '{data.get('title')}'.\n\n"
-                    "A sessão está protegida e você não forneceu a senha correta."
-                )
-                return
-            
-            # Acesso autorizado - prossegue normalmente
-            logging.info(f"🔓 Acesso autorizado para {self.user_session_name} ao servidor {data.get('title')}")
+        con_codigo = data.get('db_id')
         
         # DEBUG: Verificar se logging está funcionando
         print(f"[DEBUG CONSOLE] Iniciando conexão RDP para {data.get('title')}")
         logging.info(f"[DEBUG LOGGING] Iniciando conexão RDP para {data.get('title')}")
         
-        # Verifica se cliente RDP está disponível
-        is_available, status_msg = rdp_connector.is_rdp_available()
-        if not is_available:
-            logging.error(f"[RDP] Cliente RDP não disponível: {status_msg}")
-            error_msg = f"Cliente RDP não disponível:\n{status_msg}\n\n{rdp_connector.get_installation_instructions()}"
-            messagebox.showerror("Erro - Cliente RDP", error_msg)
-            return
+        # DEBUG: Verificar onde estão os logs
+        from .config import LOG_FILE, USER_DATA_DIR
+        print(f"[DEBUG] USER_DATA_DIR: {USER_DATA_DIR}")
+        print(f"[DEBUG] LOG_FILE: {LOG_FILE}")
+        print(f"[DEBUG] Log file exists: {os.path.exists(LOG_FILE)}")
         
-        logging.info(f"[RDP] Cliente RDP disponível: {status_msg}")
+        # Verificar handlers do logger
+        root_logger = logging.getLogger()
+        print(f"[DEBUG] Logger level: {root_logger.level}")
+        print(f"[DEBUG] Logger handlers: {len(root_logger.handlers)}")
+        for i, handler in enumerate(root_logger.handlers):
+            print(f"[DEBUG] Handler {i}: {type(handler).__name__}")
+        
+        rdp_exe_path = os.path.join(ASSETS_DIR, 'rdp.exe')
+        
+        # Debug detalhado para localizar o rdp.exe
+        logging.info(f"[RDP] BASE_DIR: {BASE_DIR}")
+        logging.info(f"[RDP] ASSETS_DIR: {ASSETS_DIR}")
+        logging.info(f"[RDP] Procurando rdp.exe em: {rdp_exe_path}")
+        logging.info(f"[RDP] sys.frozen: {getattr(sys, 'frozen', False)}")
+        logging.info(f"[RDP] sys.executable: {sys.executable}")
+        
+        if not os.path.exists(rdp_exe_path):
+            # Tenta localizar o rdp.exe em outros locais possíveis
+            possible_paths = [
+                os.path.join(os.path.dirname(sys.executable), 'assets', 'rdp.exe'),
+                os.path.join(os.path.dirname(sys.executable), '_internal', 'assets', 'rdp.exe'),
+                os.path.join(os.getcwd(), 'assets', 'rdp.exe'),
+                os.path.join(BASE_DIR, '..', 'assets', 'rdp.exe')
+            ]
+            
+            found_path = None
+            for path in possible_paths:
+                logging.info(f"[RDP] Tentando: {path}")
+                if os.path.exists(path):
+                    found_path = path
+                    logging.info(f"[RDP] Encontrado rdp.exe em: {path}")
+                    break
+            
+            if found_path:
+                rdp_exe_path = found_path
+            else:
+                logging.error(f"[RDP] rdp.exe não encontrado em nenhum local")
+                messagebox.showerror("Erro", f"Executável não encontrado:\n{rdp_exe_path}\n\nCaminhos testados:\n" + "\n".join(possible_paths))
+                return
         
         # Start recording if enabled
         session_id = None
@@ -1005,26 +1097,60 @@ class Application(ctk.CTk):
                 logging.warning(f"Failed to start recording for RDP connection to {data.get('ip')}")
         
         def task():
+            # Carrega configuração do monitor e RDP
+            app_config = get_app_config()
+            monitor = app_config.get('monitor', 1)
+            rdp_config = app_config.get('rdp', {})
+            
+            # Constrói comando base do RDP
+            cmd = [
+                rdp_exe_path, f"/v:{data['ip']}", f"/u:{data['user']}", f"/p:{data['pwd']}",
+                f"/title:{data['title']}", '/noprinters', '/nosound', '/nowallpaper',
+                '/drives:fixed,-c:', f'/mon:{monitor}'
+            ]
+            
+            # Adiciona parâmetros de janela baseado na configuração
+            if rdp_config.get('fullscreen', False):
+                cmd.append('/f')
+            elif rdp_config.get('maximize_window', False):
+                cmd.append('/max')
+            else:
+                # Para janela normal, usa dimensões configuradas
+                width = rdp_config.get('default_width', 1024)
+                height = rdp_config.get('default_height', 768)
+                cmd.extend([f'/w:{width}', f'/h:{height}'])
+            icon_path = os.path.join(ASSETS_DIR, 'ats.ico') 
+            if os.path.exists(icon_path):
+                cmd.append(f'/icon:{icon_path}')
             try:
-                # Usa o conector RDP multiplataforma
-                success = rdp_connector.connect(data)
-                
-                if success:
-                    logging.info(f"RDP connection initiated successfully for {data.get('ip')}")
+                # Don't log the raw password. Create a masked copy for logging.
+                masked_cmd = [c if not c.startswith('/p:') else '/p:***' for c in cmd]
+                logging.info(f"Executando RDP: {' '.join(masked_cmd)}")
+
+                # Capture output to show a helpful error message on failure.
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+                if proc.returncode != 0:
+                    # Log full output (server logs may contain useful info)
+                    logging.error(f"rdp.exe exit {proc.returncode}. stdout: {proc.stdout}; stderr: {proc.stderr}")
+                    # Show a user-friendly error (truncate to avoid huge dialogs)
+                    err_msg = proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
+                    if len(err_msg) > 1000:
+                        err_msg = err_msg[:1000] + "... (truncated)"
+                    messagebox.showerror("Erro", f"Falha ao executar o rdp.exe:\n{err_msg}\n\n(Código de saída: {proc.returncode})")
                 else:
-                    logging.error(f"Failed to initiate RDP connection for {data.get('ip')}")
-                    messagebox.showerror("Erro", f"Falha ao conectar via RDP para {data.get('ip')}")
+                    logging.info(f"RDP connection completed successfully for {data.get('ip')}")
                     
+            except FileNotFoundError as e:
+                logging.error(f"rdp.exe não encontrado: {e}")
+                messagebox.showerror("Erro", f"Executável rdp.exe não encontrado:\n{e}")
             except Exception as e:
-                logging.exception("Erro inesperado ao conectar via RDP")
-                messagebox.showerror("Erro", f"Falha ao conectar via RDP:\n{e}")
+                logging.exception("Erro inesperado ao executar rdp.exe")
+                messagebox.showerror("Erro", f"Falha ao executar o rdp.exe:\n{e}")
             finally:
                 # Stop recording when RDP session ends
                 if session_id and self.recording_manager:
                     if self.recording_manager.stop_session_recording():
                         logging.info(f"Recording stopped for session {session_id}")
-                    else:
-                        logging.warning(f"Failed to stop recording for session {session_id}")
                     else:
                         logging.warning(f"Failed to stop recording for session {session_id}")
         
@@ -1035,36 +1161,7 @@ class Application(ctk.CTk):
         data = self._get_selected_item_data()
         if not data: return
 
-        # 🔒 VERIFICAÇÃO DE PROTEÇÃO DE SESSÃO
-        if session_protection_manager and session_protection_manager.is_session_protected(data.get('db_id')):
-            # Sessão protegida - precisa de validação
-            protection_info = session_protection_manager.get_session_protection_info(data.get('db_id'))
-            protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
-            
-            # Mostra diálogo de validação de senha
-            validation_dialog = ValidateSessionPasswordDialog(
-                parent=self,
-                connection_data=data,
-                requesting_user=self.user_session_name,
-                protected_by=protected_by
-            )
-            
-            # Aguarda resultado da validação
-            validation_dialog.wait_window()
-            result = validation_dialog.get_result()
-            
-            if not result or not result.get("validated"):
-                # Acesso negado - não prossegue com a conexão
-                logging.warning(f"🔒 Acesso negado para {self.user_session_name} ao servidor {data.get('title')} via MSTSC")
-                messagebox.showwarning(
-                    "Acesso Negado", 
-                    f"Não foi possível acessar o servidor '{data.get('title')}'.\n\n"
-                    "A sessão está protegida e você não forneceu a senha correta."
-                )
-                return
-            
-            # Acesso autorizado - prossegue normalmente
-            logging.info(f"🔓 Acesso autorizado para {self.user_session_name} ao servidor {data.get('title')} via MSTSC")
+        con_codigo = data.get('db_id')
 
         if data.get('username'):
             msg = f"'{data['username']}' já está conectado(a) a este cliente.\nDeseja continuar e conectar mesmo assim?"
@@ -1088,13 +1185,45 @@ class Application(ctk.CTk):
         if not data: 
             return
         
+        con_codigo = data.get('db_id')
+        logging.info(f"[RELEASE_DEBUG] Tentando liberar conexão {con_codigo}")
+        logging.info(f"[RELEASE_DEBUG] Tipo do con_codigo: {type(con_codigo)}")
+        
+        session_protection_manager = get_current_session_protection_manager()
+        logging.info(f"[RELEASE_DEBUG] session_protection_manager existe: {session_protection_manager is not None}")
+        if session_protection_manager:
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager ID: {getattr(session_protection_manager, 'instance_id', 'NO_ID')}")
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}")
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}")
+        try:
+            con_codigo = int(con_codigo) if con_codigo else None
+            logging.info(f"[RELEASE_DEBUG] con_codigo convertido para int: {con_codigo}")
+        except (ValueError, TypeError) as e:
+            logging.error(f"[RELEASE_DEBUG] Erro ao converter con_codigo para int: {e}")
+            messagebox.showerror("Erro", "ID da conexão inválido.")
+            return
+        
+        if not con_codigo:
+            logging.error(f"[RELEASE_DEBUG] con_codigo é None ou inválido")
+            messagebox.showerror("Erro", "ID da conexão não encontrado.")
+            return
+        
+        if session_protection_manager:
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager ID: {getattr(session_protection_manager, 'instance_id', 'NO_ID')}")
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}")
+            logging.info(f"[RELEASE_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}")
+        
         # Verifica se existe proteção de sessão
-        if not session_protection_manager or not session_protection_manager.is_session_protected(data.get('db_id')):
+        session_protection_manager = get_current_session_protection_manager()
+        
+        if not session_protection_manager or not session_protection_manager.is_session_protected(con_codigo):
+            logging.info(f"[RELEASE_DEBUG] Sem proteção ativa detectada para conexão {con_codigo}")
+            logging.info(f"[RELEASE_DEBUG] Dados da conexão: {data}")
             messagebox.showinfo("Sem Proteção", "Este servidor não possui proteção ativa para liberar.")
             return
         
         # Obtém informações da proteção
-        protection_info = session_protection_manager.get_session_protection_info(data.get('db_id'))
+        protection_info = session_protection_manager.get_session_protection_info(con_codigo)
         protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
         
         # Mostra diálogo de validação de senha para liberação
@@ -1122,7 +1251,7 @@ class Application(ctk.CTk):
         
         # Senha correta - remove a proteção
         success = session_protection_manager.remove_session_protection(
-            data.get('db_id'),
+            con_codigo,
             self.user_session_name
         )
         
@@ -1191,13 +1320,16 @@ class Application(ctk.CTk):
         if not data:
             return
         
+        con_codigo = data.get('db_id')
+        
+        session_protection_manager = get_current_session_protection_manager()
         if not CreateSessionProtectionDialog or not session_protection_manager:
             messagebox.showwarning("Não Disponível", "Sistema de proteção de sessão não está disponível.")
             return
         
         # Verifica se já existe proteção
-        if session_protection_manager.is_session_protected(data.get('db_id')):
-            existing_protection = session_protection_manager.get_session_protection_info(data.get('db_id'))
+        if session_protection_manager.is_session_protected(con_codigo):
+            existing_protection = session_protection_manager.get_session_protection_info(con_codigo)
             protected_by = existing_protection.get('protected_by', 'Unknown') if existing_protection else 'Unknown'
             
             if protected_by == self.user_session_name:
@@ -1246,17 +1378,20 @@ class Application(ctk.CTk):
         if not data:
             return
         
+        con_codigo = data.get('db_id')
+        
         if not session_protection_manager:
             messagebox.showwarning("Não Disponível", "Sistema de proteção de sessão não está disponível.")
             return
         
         # Verifica se existe proteção
-        if not session_protection_manager.is_session_protected(data.get('db_id')):
+        if not session_protection_manager.is_session_protected(con_codigo):
+            logging.info(f"Data:{ data}")
             messagebox.showinfo("Sem Proteção", "Este servidor não possui proteção ativa.")
             return
         
         # Verifica informações da proteção
-        protection_info = session_protection_manager.get_session_protection_info(data.get('db_id'))
+        protection_info = session_protection_manager.get_session_protection_info(con_codigo)
         protected_by = protection_info.get('protected_by', 'Unknown') if protection_info else 'Unknown'
         
         # Verifica se o usuário atual é o criador da proteção
@@ -1275,7 +1410,7 @@ class Application(ctk.CTk):
             f"Outros usuários voltarão a ter acesso livre."
         ):
             success = session_protection_manager.remove_session_protection(
-                data.get('db_id'),
+                con_codigo,
                 self.user_session_name
             )
             
@@ -1724,6 +1859,17 @@ class Application(ctk.CTk):
                         "Acesso Exclusivo",
                         f"Usuário '{connected_user}' foi desconectado para permitir seu acesso exclusivo."
                     )
+                    # Ao desconectar um usuário, tenta liberar quaisquer proteções que ele tenha criado
+                    try:
+                        protection_manager = get_current_session_protection_manager()
+                        if protection_manager:
+                            protection_manager.cleanup_current_user_protections(connected_user, show_notification=False)
+                            logging.info(f"[SESSION_PROTECTION] Proteções do usuário {connected_user} verificadas/removidas após desconexão")
+                        else:
+                            logging.warning(f"[SESSION_PROTECTION] Não foi possível obter session_protection_manager para limpar proteções de {connected_user}")
+                    except Exception as e:
+                        logging.error(f"Erro ao limpar proteções após desconexão de {connected_user}: {e}")
+
                     # Atualiza a visualização
                     self._populate_tree()
                     
@@ -1734,8 +1880,14 @@ class Application(ctk.CTk):
         """Mostra proteções de sessão ativas (para administradores)."""
         try:
             current_user = self.user_session_name
-            user_protections = session_protection_manager.get_user_protected_sessions(current_user)
-            total_protections = len(session_protection_manager.protected_sessions)
+            protection_manager = get_current_session_protection_manager()
+            if protection_manager:
+                user_protections = protection_manager.get_user_protected_sessions(current_user)
+                total_protections = len(protection_manager.protected_sessions)
+            else:
+                logging.warning("[SESSION_PROTECTION] session_protection_manager não disponível ao exibir proteções ativas")
+                user_protections = []
+                total_protections = 0
             
             if user_protections:
                 protection_list = []
@@ -1756,18 +1908,38 @@ class Application(ctk.CTk):
             logging.error(f"Erro ao verificar proteções ativas: {e}")
     
     def _cleanup_collaborative_sessions(self):
-        """Limpa proteções de sessão (chamado no shutdown)."""
+        """Limpa proteções de sessão criadas pelo usuário atual (chamado no shutdown)."""
         try:
-            session_protection_manager.cleanup_all_protections()
-            logging.info("Limpeza de proteções de sessão concluída")
+            import os
+            current_user = os.getenv('USERNAME', 'unknown')
+            
+            logging.info(f"🔒 SHUTDOWN: Iniciando limpeza de proteções para usuário {current_user}")
+            
+            # Obtém a instância atual do session_protection_manager
+            protection_manager = get_current_session_protection_manager()
+            
+            if protection_manager:
+                # Remove proteções criadas pelo usuário atual (sem notificação gráfica no shutdown)
+                removed_count = protection_manager.cleanup_current_user_protections(current_user, show_notification=False)
+                
+                if removed_count > 0:
+                    logging.info(f"🔒 SHUTDOWN: {removed_count} proteções do usuário {current_user} removidas automaticamente")
+                
+                # Limpeza geral (proteções locais)
+                protection_manager.cleanup_all_protections()
+                logging.info("🔒 SHUTDOWN: Limpeza de proteções de sessão concluída")
+            else:
+                logging.warning("🔒 SHUTDOWN: session_protection_manager não disponível, pulando limpeza de proteções")
+            
         except Exception as e:
             logging.error(f"Erro na limpeza de proteções: {e}")
 
     def _cleanup_orphaned_protections(self):
         """Executa limpeza de proteções órfãs em background."""
         try:
-            if session_protection_manager:
-                success, message, count = session_protection_manager.cleanup_orphaned_protections()
+            protection_manager = get_current_session_protection_manager()
+            if protection_manager:
+                success, message, count = protection_manager.cleanup_orphaned_protections()
                 if count > 0:
                     logging.info(f"🧹 Limpeza automática: {count} proteções órfãs removidas")
         except Exception as e:

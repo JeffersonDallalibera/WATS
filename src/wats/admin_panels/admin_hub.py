@@ -7,6 +7,7 @@ from ..db.db_service import DBService
 from .user_manager import ManageUserDialog
 from .group_manager import ManageGroupDialog
 from .connection_manager import ManageConnectionDialog
+from .temporary_access_manager import TemporaryAccessDialog
 
 
 class AdminHubDialog(ctk.CTkToplevel):
@@ -22,7 +23,7 @@ class AdminHubDialog(ctk.CTkToplevel):
         self.parent_app = parent
         
         self.title("Painel de Administração")
-        self.geometry("400x350")
+        self.geometry("400x550")  # Aumentar altura para novo botão
         
         self.grid_columnconfigure(0, weight=1)
         
@@ -48,11 +49,19 @@ class AdminHubDialog(ctk.CTkToplevel):
         )
         btn_manage_groups.grid(row=3, column=0, padx=20, pady=10, sticky="ew")
 
+        # NOVO: Botão para permissões temporárias
+        btn_temporary_access = ctk.CTkButton(
+            self, text="🕐 Permissões Temporárias",
+            height=45, command=self._open_temporary_access_manager, state="normal",
+            fg_color="orange", hover_color="darkorange"
+        )
+        btn_temporary_access.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
+
         btn_close = ctk.CTkButton(
             self, text="Fechar Painel Admin",
             height=35, command=self.destroy, fg_color="gray40", hover_color="gray30"
         )
-        btn_close.grid(row=4, column=0, padx=20, pady=(20, 20), sticky="ew")
+        btn_close.grid(row=5, column=0, padx=20, pady=(20, 20), sticky="ew")
 
         self.transient(parent)
         self.grab_set()
@@ -76,6 +85,13 @@ class AdminHubDialog(ctk.CTkToplevel):
         """Abre o diálogo de gerenciamento de grupos."""
         logging.info("Abrindo gerenciador de grupos...")
         dialog = ManageGroupDialog(self, self.db)
+        self.wait_window(dialog)
+        self._on_admin_dialog_close()
+
+    def _open_temporary_access_manager(self):
+        """Abre o diálogo de gerenciamento de permissões temporárias."""
+        logging.info("Abrindo gerenciador de permissões temporárias...")
+        dialog = TemporaryAccessDialog(self, self.db)
         self.wait_window(dialog)
         self._on_admin_dialog_close()
         

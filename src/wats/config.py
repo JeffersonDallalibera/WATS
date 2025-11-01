@@ -87,6 +87,54 @@ def is_demo_mode() -> bool:
     return os.getenv('WATS_DEMO_MODE', 'false').lower() in ('true', '1', 'yes')
 
 
+# --- Função para expandir variáveis de sistema em caminhos ---
+def expand_system_variables(path: str) -> str:
+    """
+    Expande variáveis de sistema em caminhos de arquivo.
+    Suporta: {USERPROFILE}, {APPDATA}, {LOCALAPPDATA}, {HOME}, {DESKTOP}, {DOCUMENTS}, {VIDEOS}
+    
+    Exemplos:
+        {USERPROFILE}/Videos/Wats -> C:/Users/username/Videos/Wats
+        {APPDATA}/WATS -> C:/Users/username/AppData/Roaming/WATS
+        {VIDEOS}/Gravacoes -> C:/Users/username/Videos/Gravacoes
+    """
+    if not path or not isinstance(path, str):
+        return path
+    
+    # Mapeamento de variáveis especiais
+    import os
+    from pathlib import Path
+    
+    # Obtém caminhos do sistema
+    user_profile = os.path.expanduser("~")
+    
+    variables = {
+        'USERPROFILE': user_profile,
+        'HOME': user_profile,
+        'APPDATA': os.getenv('APPDATA', os.path.join(user_profile, 'AppData', 'Roaming')),
+        'LOCALAPPDATA': os.getenv('LOCALAPPDATA', os.path.join(user_profile, 'AppData', 'Local')),
+        'DOCUMENTS': os.path.join(user_profile, 'Documents'),
+        'DESKTOP': os.path.join(user_profile, 'Desktop'),
+        'VIDEOS': os.path.join(user_profile, 'Videos'),
+        'PICTURES': os.path.join(user_profile, 'Pictures'),
+        'DOWNLOADS': os.path.join(user_profile, 'Downloads'),
+        'TEMP': os.getenv('TEMP', os.path.join(user_profile, 'AppData', 'Local', 'Temp'))
+    }
+    
+    # Substitui as variáveis
+    expanded_path = path
+    for var_name, var_value in variables.items():
+        expanded_path = expanded_path.replace(f'{{{var_name}}}', var_value)
+    
+    # Também expande variáveis de ambiente padrão do sistema
+    expanded_path = os.path.expandvars(expanded_path)
+    
+    # Normaliza o caminho (converte separadores)
+    expanded_path = os.path.normpath(expanded_path)
+    
+    return expanded_path
+
+
 # --- Função para carregar config.json ---
 def load_config_json() -> Dict[str, Any]:
     """Carrega configurações do config.json."""
@@ -176,9 +224,17 @@ def load_environment_variables():
 def setup_logging():
     print("Configurando logging...")
     """Configura o logging para o console E para um arquivo no USER_DATA_DIR."""
-    log_level_str = os.getenv('LOG_LEVEL', 'INFO').upper()
+    
+    # Primeiro tenta carregar o nível de log do config.json
+    config_data = load_config_json()
+    config_log_level = config_data.get('application', {}).get('log_level', 'INFO')
+    
+    # Variável de ambiente tem prioridade sobre config.json
+    log_level_str = os.getenv('LOG_LEVEL', config_log_level).upper()
     log_level = getattr(logging, log_level_str, logging.INFO) # Converte string para nível de log
     log_format = '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s' # Adiciona número da linha
+
+    print(f"Nível de logging definido: {log_level_str} (fonte: {'variável ambiente' if 'LOG_LEVEL' in os.environ else 'config.json'})")
 
     # Remove handlers antigos para evitar logs duplicados
     # Usa root logger para garantir que todos os logs sejam afetados
@@ -256,6 +312,11 @@ class Settings:
         # Diretório de gravação baseado em USER_DATA_DIR
         default_recording_dir = os.path.join(get_user_data_dir(), 'recordings')
         recording_output_dir = get_config_value(['recording', 'output_dir'], 'RECORDING_OUTPUT_DIR', default_recording_dir)
+        
+        # Expande variáveis de sistema no caminho do diretório de gravação
+        if recording_output_dir:
+            recording_output_dir = expand_system_variables(recording_output_dir)
+        
         self.RECORDING_OUTPUT_DIR = recording_output_dir if recording_output_dir else default_recording_dir
         
         # Configurações numéricas com conversão
@@ -401,8 +462,23 @@ class Settings:
                 logging.error(f"Invalid RECORDING_MAX_DURATION_MINUTES: {self.RECORDING_MAX_DURATION_MINUTES} (must be >= 1)")
                 return False
                 
-            # Try to create output directory
-            os.makedirs(self.RECORDING_OUTPUT_DIR, exist_ok=True)
+            # Try to create output directory with improved logging
+            try:
+                if not os.path.exists(self.RECORDING_OUTPUT_DIR):
+                    logging.info(f"Creating recording output directory: {self.RECORDING_OUTPUT_DIR}")
+                    os.makedirs(self.RECORDING_OUTPUT_DIR, exist_ok=True)
+                    logging.info(f"Recording directory created successfully: {self.RECORDING_OUTPUT_DIR}")
+                else:
+                    logging.debug(f"Recording output directory already exists: {self.RECORDING_OUTPUT_DIR}")
+                
+                # Verify directory is writable
+                if not os.access(self.RECORDING_OUTPUT_DIR, os.W_OK):
+                    logging.error(f"Recording output directory is not writable: {self.RECORDING_OUTPUT_DIR}")
+                    return False
+                    
+            except Exception as e:
+                logging.error(f"Failed to create recording output directory '{self.RECORDING_OUTPUT_DIR}': {e}")
+                return False
             
             logging.info("Recording configuration validation passed")
             return True
@@ -530,4 +606,80 @@ def get_config() -> Dict[str, Any]:
                 'compress_crf': 28,
                 'auto_start': False
             }
+        }
+
+
+def get_app_config() -> Dict[str, Any]:
+    """
+    Retorna as configurações completas do config.json.
+    
+    Returns:
+        Dict com todas as configurações com valores padrão.
+    """
+    try:
+        config_data = load_config_json()
+        
+        # Configurações da aplicação
+        app_config = config_data.get('application', {})
+        app_defaults = {
+            'window_title': 'WATS - Sistema de Gravação RDP',
+            'window_geometry': '1200x800',
+            'window_resizable': True,
+            'theme': 'Dark',
+            'log_level': 'INFO',
+            'monitor': 1,
+            'minimize_to_tray': True,
+            'start_minimized': False,
+            'check_updates': True,
+            'language': 'pt-BR',
+            'auto_consent': False
+        }
+        app_result = app_defaults.copy()
+        app_result.update(app_config)
+        
+        # Configurações do RDP
+        rdp_config = config_data.get('rdp', {})
+        rdp_defaults = {
+            'maximize_window': False,
+            'window_mode': 'normal',
+            'allow_window_override': True,
+            'fullscreen': False,
+            'default_width': 1024,
+            'default_height': 768
+        }
+        rdp_result = rdp_defaults.copy()
+        rdp_result.update(rdp_config)
+        
+        # Validação do monitor
+        monitor = app_result.get('monitor', 1)
+        if not isinstance(monitor, int) or monitor < 1:
+            logging.warning(f"Valor inválido para monitor: {monitor}. Usando monitor 1.")
+            app_result['monitor'] = 1
+        
+        # Retorna configurações completas
+        full_config = config_data.copy()
+        full_config['application'] = app_result
+        full_config['rdp'] = rdp_result
+        
+        # Para compatibilidade, adiciona as configurações de aplicação no nível raiz
+        full_config.update(app_result)
+        
+        logging.info(f"Configurações da aplicação carregadas: título='{app_result['window_title']}', monitor={app_result['monitor']}")
+        return full_config
+        
+    except Exception as e:
+        logging.error(f"Erro ao carregar configurações da aplicação: {e}")
+        # Retorna configuração padrão em caso de erro
+        return {
+            'window_title': 'WATS - Sistema de Gravação RDP',
+            'window_geometry': '1200x800',
+            'window_resizable': True,
+            'theme': 'Dark',
+            'log_level': 'INFO',
+            'monitor': 1,
+            'minimize_to_tray': True,
+            'start_minimized': False,
+            'check_updates': True,
+            'language': 'pt-BR',
+            'auto_consent': False
         }

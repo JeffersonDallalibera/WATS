@@ -40,7 +40,17 @@
     "max_file_age_days": 30
   },
   "application": {
-    "log_level": "DEBUG",
-    "theme": "Dark"
+    "log_level": "INFO",
+    "theme": "Dark",
+    "window_title": "WATS - Sistema de Gravação RDP",
+    "monitor": 2
+  },
+  "rdp": {
+    "maximize_window": false,
+    "window_mode": "fullscreen",
+    "allow_window_override": true,
+    "fullscreen": true,
+    "default_width": 1024,
+    "default_height": 768
   }
 }
