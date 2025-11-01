@@ -1,206 +1,232 @@
-# WATS - Gerenciador de Conexões Multiplataforma
+# WATS - Windows Application and Terminal Server
+
+![WATS Logo](assets/icons/ats.ico)
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/BUILD_MULTIPLATFORM.md)
 
-**WATS V4.2** é um Gerenciador de Conexões RDP Multiplataforma abrangente com recursos avançados de gravação de sessões para monitoramento e auditoria de conexões RDP.
+WATS é um sistema profissional para gerenciamento de conexões RDP com gravação, proteção de sessões e auditoria — projetado para ambientes corporativos e multiplataforma (Windows e Linux).
 
-## 🚀 Recursos
+## 🎯 Visão Geral
 
-### Funcionalidades Principais
+O WATS foi desenvolvido para resolver os desafios de gerenciamento centralizado de conexões RDP em ambientes corporativos, oferecendo:
 
-- **🖥️ Multiplataforma**: Funciona nativamente no Windows e Linux
-- **🔗 Gerenciamento de Conexões RDP**: Gestão centralizada com suporte a FreeRDP
-- **🗄️ Integração com Banco de Dados**: Suporte otimizado para SQL Server e PostgreSQL
-- **👥 Gerenciamento de Usuários**: Painel administrativo para gestão de usuários e conexões
-- **📁 Organização por Grupos**: Organize conexões por grupos para melhor gerenciamento
+- **Gerenciamento Centralizado**: Controle todas as conexões RDP de uma interface única
+- **Gravação de Sessões**: Sistema automático de gravação para auditoria e compliance
+- **Proteção de Sessões**: Evita desconexões involuntárias entre usuários
+- **Multiplataforma**: Funciona nativamente no Windows e Linux
+- **Auditoria Completa**: Logs detalhados de todas as ações e conexões
 
-### Sistema RDP Multiplataforma _(NOVO)_
+## ✨ Principais recursos
 
-- **🔄 Detecção Automática**: Escolhe automaticamente o melhor cliente RDP disponível
-- **🐧 Suporte Linux**: FreeRDP, rdesktop, remmina integrados
-- **🪟 Compatibilidade Windows**: rdp.exe customizado + MSTSC nativo
-- **📊 Controle de Sessões**: Gerenciamento completo de sessões ativas
-- **🔧 Fallback Inteligente**: Sistema robusto com múltiplas opções de backup
+### 🖥️ Gerenciamento de Conexões
 
-### Sistema de Gravação de Sessões
+- Interface intuitiva para organização de servidores e conexões
+- Suporte a grupos para categorização de servidores
+- Conexão automática com credenciais salvas de forma segura
+- Monitoramento em tempo real do status das conexões
 
-- **📹 Múltiplos Modos de Gravação**: Tela cheia, janela RDP específica ou gravação da janela ativa
-- **⚡ Performance Leve**: Captura de tela otimizada com uso mínimo de CPU/memória
-- **🗜️ Compressão H.264**: Compressão de vídeo eficiente para redução do tamanho dos arquivos
-- **🔄 Gerenciamento Automático de Arquivos**: Rotação de arquivos baseada em tamanho e tempo com limpeza
-- **🔒 Conformidade com Privacidade**: Escopo de gravação configurável para requisitos de privacidade
+### 🎬 Sistema de Gravação
 
-### Recursos Avançados
+- Gravação automática de todas as sessões RDP
+- Múltiplos formatos de vídeo (MP4, AVI)
+- Rotação automática de arquivos baseada em tamanho/tempo
+- Limites de espaço total/idade com limpeza automática
+- Armazenamento local seguro com opções de compressão
 
-- **🎨 Interface Moderna**: Interface baseada em CustomTkinter com suporte a temas escuro/claro
-- **📊 Monitoramento em Tempo Real**: Status de conexão ao vivo e monitoramento de heartbeat
-- **📋 Trilha de Auditoria**: Logging abrangente e metadados de sessão
-- **📦 Build Multiplataforma**: Executável Windows (.exe) e pacote Linux (.deb)
+### 🔒 Proteção de Sessões
 
-## 📋 Requisitos
+- Sistema inovador que previne desconexões involuntárias
+- Usuário conectado pode proteger sua sessão com senha
+- Validação centralizada no servidor SQL (hash, SPs, auditoria)
+- Logs de auditoria para todas as tentativas de acesso
+
+### 👥 Gestão de Usuários e Permissões
+
+- Painel administrativo completo
+- Controle granular de permissões por usuário/grupo
+- Sistema de autenticação integrado
+- Auditoria de ações dos usuários
+
+### �️ Integração com Banco de Dados
+
+- Suporte nativo para SQL Server e PostgreSQL
+- Estrutura de dados otimizada para performance
+- Backup automático e recuperação de dados
+- Sincronização em tempo real entre múltiplas instâncias
+
+## 🧩 Plataforma e requisitos
 
 ### Windows
 
-- **SO**: Windows 10/11
-- **Python**: 3.11+
-- **Memória**: 4GB RAM mínimo
-- **FreeRDP**: `winget install FreeRDP.FreeRDP` (recomendado)
+- Windows 10/11 ou Windows Server 2016+
+- Python 3.11+ (para execução do código fonte)
+- SQL Server 2017+ ou PostgreSQL 12+
+- 4GB RAM mínimo, 8GB recomendado
+- 10GB espaço livre para gravações
 
 ### Linux
 
-- **SO**: Ubuntu 20.04+, Debian 11+, CentOS 8+
-- **Python**: 3.11+
-- **Memória**: 4GB RAM mínimo
-- **FreeRDP**: `sudo apt-get install freerdp2-x11` (recomendado)
+- Ubuntu/Debian equivalentes
+- Python 3.11+
+- PostgreSQL 12+
+- FreeRDP (RDP)
+- 4GB RAM mínimo, 8GB recomendado
 
-### Dependências
+## 🚀 Início rápido (desenvolvimento)
 
-```txt
-customtkinter>=5.0.0
-pyodbc>=4.0.0
-python-dotenv>=1.0.0
-psycopg2-binary>=2.9.0
-opencv-python>=4.8.0
-mss>=9.0.0
-numpy>=1.24.0
-pywin32>=306
-psutil>=5.9.0
-```
+Instalação e execução (Windows PowerShell):
 
-## 🛠️ Instalação
+```powershell
+# Clonar e entrar no projeto
+git clone https://github.com/JeffersonDallalibera/WATS.git
+cd WATS
 
-### 1. Clonar Repositório
-
-```bash
-git clone <repository-url>
-cd wats
-```
-
-### 2. Criar Ambiente Virtual
-
-```bash
+# Ambiente virtual
 python -m venv venv
-venv\Scripts\activate
-```
+.\venv\Scripts\Activate.ps1
 
-### 3. Instalar Dependências
-
-```bash
+# Dependências
 pip install -r requirements.txt
-```
 
-### 4. Configurar Ambiente
-
-```bash
-# Copiar configuração de exemplo
-copy .env.recording.sample .env
-
-# Editar arquivo .env com configurações do banco de dados e gravação
-notepad .env
-```
-
-### 5. Executar Aplicação
-
-```bash
+# Executar
 python run.py
+```
+
+Modo demo (sem banco), útil para explorar a UI:
+
+```powershell
+$env:WATS_DEMO_MODE = "true"; python run.py
 ```
 
 ## ⚙️ Configuração
 
-### Configuração do Banco de Dados
+### Banco de Dados
 
-```env
-# Configurações do Banco de Dados
-DB_TYPE=sqlserver           # Tipo do banco (sqlserver ou sqlite)
-DB_SERVER=seu_servidor
-DB_DATABASE=seu_banco_de_dados
-DB_UID=seu_usuario
-DB_PWD=sua_senha
-DB_PORT=5432               # ou 1433 para SQL Server
+1. **SQL Server**: Execute os scripts em `scripts/create_wats_database.sql`
+2. **PostgreSQL**: Configure conforme `docs/DATABASE_INSTALLATION.md`
+3. Configure a string de conexão no arquivo `.env`
+
+### Gravação de Sessões (config.json)
+
+```json
+{
+  "recording": {
+    "enabled": true,
+    "auto_start": true,
+    "mode": "rdp_window",
+    "output_dir": "{VIDEOS}/WATS",
+    "fps": 10,
+    "quality": 23,
+    "max_file_size_mb": 100,
+    "max_duration_minutes": 30
+  }
+}
 ```
 
-### Configuração de Gravação
+Variáveis de ambiente (exemplo):
 
-```env
-# Configurações de Gravação
-RECORDING_ENABLED=true
-RECORDING_MODE=rdp_window           # full_screen, rdp_window, active_window
-RECORDING_AUTO_START=true
-RECORDING_FPS=10
-RECORDING_QUALITY=23
-RECORDING_MAX_FILE_SIZE_MB=100
-RECORDING_MAX_DURATION_MINUTES=30
+```powershell
+# Banco de Dados
+$env:DB_TYPE = "sqlserver"
+$env:DB_SERVER = "seu-servidor"; $env:DB_DATABASE = "WATS_DB"
+$env:DB_UID = "usuario"; $env:DB_PWD = "senha"; $env:DB_PORT = "1433"
+
+# Gravação
+$env:RECORDING_ENABLED = "true"; $env:RECORDING_MODE = "rdp_window"
+$env:RECORDING_AUTO_START = "true"; $env:RECORDING_FPS = "10"
+$env:RECORDING_QUALITY = "23"; $env:RECORDING_MAX_FILE_SIZE_MB = "100"
+$env:RECORDING_MAX_DURATION_MINUTES = "30"
 ```
 
 ## 📚 Documentação
 
-- **[Documentação do Sistema de Gravação](RECORDING_SYSTEM_DOCUMENTATION.md)** - Guia abrangente para gravação de sessões
-- **[Otimização de Performance](PERFORMANCE_OPTIMIZATION.md)** - Guia de ajuste de performance
-- **[Configuração de Temas](THEME_FIX_README.md)** - Personalização de temas da interface
-- **[Instruções de Build](BUILD_README.md)** - Criando executáveis standalone
+### Documentos Essenciais
 
-## 🎯 Modos de Gravação
+- **[Configuração Completa](docs/CONFIGURACAO.md)** - Guia completo de configuração
+- **[Sistema de Proteção de Sessões](docs/SISTEMA_PROTECAO_SESSOES.md)** - Como funciona a proteção
+- **[Build Multiplataforma](docs/BUILD_MULTIPLATFORM.md)** - Compilação para diferentes sistemas
+- **[API e Integração](docs/api_upload_system.md)** - Sistema de API para integrações
+- **[Banco de Dados](docs/DATABASE_INSTALLATION.md)** - Configuração do banco
+- **[RDP System](docs/RDP_SYSTEM.md)** - Funcionamento do sistema RDP
 
-### Gravação de Janela RDP _(Recomendado)_
+Para um índice simples dos documentos, consulte `docs/README.md`.
 
-- Grava apenas a janela de conexão RDP
-- Arquivos 60-80% menores
-- Melhor privacidade e performance
-- Rastreamento automático da janela
+## 🎮 Como Usar
 
-### Gravação de Tela Cheia
+### Primeira Execução
 
-- Grava toda a área de trabalho
-- Trilha de auditoria completa
-- Maiores tamanhos de arquivo e uso de CPU
+1. **Configuração Inicial**: Configure banco de dados e diretórios
+2. **Cadastro de Servidores**: Adicione seus servidores RDP
+3. **Usuários**: Configure usuários e permissões
+4. **Teste de Conexão**: Verifique se tudo está funcionando
 
-### Gravação de Janela Ativa
+### Conectando a um Servidor
 
-- Grava a janela atualmente em foco
-- Gravação dinâmica baseada na interação do usuário
+1. Selecione o servidor na lista
+2. Clique em "Conectar" ou use duplo-clique
+3. A sessão será gravada automaticamente
+4. Use o menu de contexto para opções avançadas
 
-## 🔧 Compilando Executável
+### Proteção de Sessões
 
-```bash
-# Compilar executável standalone
-python -m PyInstaller build_executable.spec --clean
-
-# Executável será criado em dist/WATS_App.exe
-```
+1. Clique com botão direito em uma conexão ativa
+2. Selecione "Proteger Sessão"
+3. Defina uma senha temporária
+4. Outros usuários precisarão da senha para conectar
 
 ## 📁 Estrutura do Projeto
 
 ```
-wats/
-├── run.py                          # Ponto de entrada da aplicação
-├── requirements.txt                # Dependências Python
-├── build_executable.spec           # Configuração PyInstaller
-├── .env.recording.sample           # Template de configuração
-├── wats_app/                       # Pacote principal da aplicação
-│   ├── __init__.py
-│   ├── main.py                     # Lógica principal da aplicação
-│   ├── app_window.py               # Janela principal da UI
-│   ├── config.py                   # Gerenciamento de configuração
-│   ├── utils.py                    # Funções utilitárias
-│   ├── dialogs.py                  # Diálogos da UI
-│   ├── admin_panels/               # Interface administrativa
-│   ├── db/                         # Camada de banco de dados
-│   │   ├── db_service.py          # Serviço de banco de dados
-│   │   ├── database_manager.py    # Gerenciamento de conexão
-│   │   └── repositories/          # Camada de acesso a dados
-│   └── recording/                  # Sistema de gravação de sessões
-│       ├── session_recorder.py    # Funcionalidade principal de gravação
-│       ├── recording_manager.py   # Coordenação de gravação
-│       └── file_rotation_manager.py # Gerenciamento de arquivos
-├── assets/                         # Assets da aplicação
-│   ├── ats.ico                    # Ícone da aplicação
-│   └── rdp.exe                    # Executável RDP
-└── docs/                          # Documentação
+WATS/
+├── src/wats/                   # Código fonte principal
+│   ├── app_window.py          # Interface principal
+│   ├── main.py                # Ponto de entrada
+│   ├── config.py              # Configurações
+│   ├── admin_panels/          # Painéis administrativos
+│   ├── db/                    # Camada de banco de dados
+│   ├── recording/             # Sistema de gravação
+│   └── session_protection.py  # Proteção de sessões
+├── docs/                      # Documentação
+├── scripts/                   # Scripts de build e deploy
+├── tests/                     # Testes automatizados
+├── assets/                    # Recursos estáticos
+└── config/                    # Arquivos de configuração
 ```
 
-## 🔒 Considerações de Segurança
+## 🧪 Testes
+
+```powershell
+python -m pytest -q
+# Teste específico
+python -m pytest tests/test_session_protection.py -q
+```
+
+---
+
+## 🔧 Desenvolvimento
+
+### Executando Testes
+
+```bash
+# Todos os testes
+python -m pytest tests/
+
+# Testes específicos
+python -m pytest tests/test_session_protection.py
+```
+
+### Build do Executável
+
+```powershell
+# Script universal
+python build.py --platform windows
+# Linux (ver docs)
+python build.py --platform linux
+```
+
+## � Segurança e conformidade
 
 ### Proteção de Dados
 
@@ -211,59 +237,111 @@ wats/
 
 ### Privacidade de Gravação
 
-- Escopo de gravação configurável
-- Políticas de limpeza automática
-- Controle de acesso para gravações
+- Antes de iniciar, o WATS exibe um diálogo de consentimento de gravação
+- Consentimentos/recusas são registrados em `wats_app.log`
+- Defina políticas de retenção (limites de tamanho/idade) conforme sua empresa
 
-### Performance
+## 📚 Documentação
 
-- Gravação leve em segundo plano
-- Otimização automática de qualidade
-- Uso mínimo de recursos do sistema
-- Interface responsiva
+### Documentos Essenciais
 
-## 🐛 Solução de Problemas
+- **[Configuração Completa](docs/CONFIGURACAO.md)** - Guia completo de configuração
+- **[Sistema de Proteção de Sessões](docs/SISTEMA_PROTECAO_SESSOES.md)** - Como funciona a proteção
+- **[Build Multiplataforma](docs/BUILD_MULTIPLATFORM.md)** - Compilação para diferentes sistemas
+- **[API e Integração](docs/api_upload_system.md)** - Sistema de API para integrações
+- **[Banco de Dados](docs/DATABASE_INSTALLATION.md)** - Configuração do banco
+- **[RDP System](docs/RDP_SYSTEM.md)** - Funcionamento do sistema RDP
+
+Para um índice simples dos documentos, consulte `docs/README.md`.
+
+## � Solução de Problemas
 
 ### Problemas Comuns
 
-**Aplicação não inicia**
+1. **Erro de Conexão com Banco**: Verifique as credenciais no `.env`
+2. **Gravação não Funciona**: Verifique permissões do diretório
+3. **RDP não Conecta**: Verifique firewall e credenciais
+4. **Performance Lenta**: Ajuste configurações de gravação
 
-```bash
-# Verificar versão do Python
-python --version
+### Logs e Diagnóstico
 
-# Verificar dependências
-pip check
+- Log da aplicação: `wats_app.log` (na pasta do executável em produção; na raiz do projeto em desenvolvimento)
 
-# Verificar configuração do ambiente
-python -c "from wats_app.config import load_environment_variables; load_environment_variables()"
+## 📈 Performance e Otimização
+
+### Configurações Recomendadas
+
+- **Pequenas Empresas** (1-10 usuários): 4GB RAM, HD padrão
+- **Médias Empresas** (11-50 usuários): 8GB RAM, SSD recomendado
+- **Grandes Empresas** (50+ usuários): 16GB+ RAM, SSD obrigatório
+
+### Monitoramento
+
+- CPU: Máximo 80% de uso sustentado
+- Memória: Máximo 70% de uso
+- Disco: Mínimo 5GB livres para gravações
+
+## 🔐 Segurança
+
+### Recursos de Segurança
+
+- Criptografia de senhas MD5 no banco
+- Proteção contra acesso não autorizado
+- Logs de auditoria completos
+- Sanitização automática de dados sensíveis
+
+### Boas Práticas
+
+- Mantenha o sistema sempre atualizado
+- Use senhas fortes para proteção de sessões
+- Monitore logs regularmente
+- Faça backup regular do banco de dados
+
+## 📊 Modo Demo
+
+Para testar o sistema sem configurar banco de dados:
+
+```powershell
+# Ativar temporariamente o modo demo
+$env:WATS_DEMO_MODE = "true"; python run.py
 ```
-
-**Gravação não está funcionando**
-
-```bash
-# Verificar dependências de gravação
-pip install opencv-python mss numpy pywin32 psutil
-
-# Verificar configuração de gravação
-python -c "from wats_app.config import Settings; s=Settings(); print(s.get_recording_config())"
-```
-
-**Problemas de conexão com banco de dados**
-
-- Verificar acessibilidade do servidor de banco de dados
-- Verificar credenciais no arquivo .env
-- Garantir que o banco de dados existe e o usuário tem permissões
 
 ## 🤝 Contribuindo
 
-1. Fork o repositório
-2. Crie uma branch para sua feature: `git checkout -b nome-da-feature`
-3. Faça suas mudanças
-4. Adicione testes se aplicável
-5. Commit suas mudanças: `git commit -am 'Adicionar feature'`
-6. Push para a branch: `git push origin nome-da-feature`
-7. Submeta um pull request
+1. Fork o projeto
+2. Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
+3. Commit suas mudanças (`git commit -am 'Adiciona nova funcionalidade'`)
+4. Push para a branch (`git push origin feature/nova-funcionalidade`)
+5. Abra um Pull Request
+
+## 📝 Changelog
+
+### Versão 4.2 (2025)
+
+- ✅ Sistema de proteção de sessões com validação no servidor
+- ✅ Suporte multiplataforma (Windows/Linux)
+- ✅ Interface modernizada com CustomTkinter
+- ✅ Sistema de gravação otimizado
+- ✅ API de integração melhorada
+
+## 📄 Licença
+
+Este projeto está licenciado sob a Licença MIT - veja o arquivo [LICENSE](LICENSE) para detalhes.
+
+## 👥 Equipe
+
+- **Jefferson Dallalibera** - Desenvolvimento Principal
+- **Contribuidores** - Veja [CONTRIBUTORS.md](CONTRIBUTORS.md)
+
+## 📞 Suporte
+
+- **Issues**: [GitHub Issues](https://github.com/JeffersonDallalibera/WATS/issues)
+- **Documentação**: `docs/`
+- **Email**: [Criar issue no GitHub]
+
+---
+
+**WATS V4.2** - Sistema Profissional de Gerenciamento RDP 6. Push para a branch: `git push origin nome-da-feature` 7. Submeta um pull request
 
 ## 📄 Licença
 

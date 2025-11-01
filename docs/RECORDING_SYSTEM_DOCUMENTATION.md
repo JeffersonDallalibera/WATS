@@ -291,6 +291,14 @@ Recording activities are logged with these patterns:
 - Consider data minimization (lower quality/resolution)
 - Regular audits of stored recordings
 
+## User Consent
+
+Before the application starts, WATS displays a consent dialog informing that RDP sessions may be recorded for audit and security. The application only continues when the user explicitly accepts.
+
+- The dialog is implemented in `run.py` (see `ConsentDialog`)
+- This applies both in development and in packaged executables
+- Consent events are logged in `wats_app.log`
+
 ### Access Control
 
 - Restrict access to recording output directory

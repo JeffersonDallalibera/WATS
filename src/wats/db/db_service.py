@@ -15,11 +15,11 @@ from src.wats.db.exceptions import DatabaseError
 try:
     # Instancia o serviço (que lê as settings)
     db_service = DBService(settings)
-    
+
     # Acessa os métodos através dos repositórios
     user_id, is_admin = db_service.users.get_user_role("meu_usuario")
     conexoes = db_service.connections.select_all("meu_usuario")
-    
+
 except DatabaseError as e:
     # A UI agora é responsável por mostrar o erro
     messagebox.showerror("Erro de Banco de Dados", str(e))
@@ -28,30 +28,34 @@ except DatabaseError as e:
 
 from src.wats.config import Settings
 from src.wats.db.database_manager import DatabaseManager
-from src.wats.db.repositories.user_repository import UserRepository
-from src.wats.db.repositories.group_repository import GroupRepository
 from src.wats.db.repositories.connection_repository import ConnectionRepository
+from src.wats.db.repositories.group_repository import GroupRepository
 from src.wats.db.repositories.log_repository import LogRepository
+from src.wats.db.repositories.user_repository import UserRepository
+
 
 class DBService:
     """Agrega todos os repositórios de banco de dados."""
-    
+
     def __init__(self, settings: Settings):
         """
         Inicializa o gerenciador de banco de dados e todos os repositórios.
         Lança DatabaseConfigError ou DatabaseConnectionError se falhar.
         """
         # Validate DB configuration explicitly here; Settings no longer raises at import time
-        if not getattr(settings, 'has_db_config', lambda: False)():
+        if not getattr(settings, "has_db_config", lambda: False)():
             from src.wats.db.exceptions import DatabaseConfigError
-            raise DatabaseConfigError("Configuração de banco ausente. Verifique as variáveis de ambiente ou o arquivo .env.")
+
+            raise DatabaseConfigError(
+                "Configuração de banco ausente. Verifique as variáveis de ambiente ou o arquivo .env."
+            )
 
         self.db_manager = DatabaseManager(settings)
-        
+
         # Inicializa os repositórios, injetando o db_manager
         self.users = UserRepository(self.db_manager)
         self.groups = GroupRepository(self.db_manager)
         self.logs = LogRepository(self.db_manager)
-        
+
         # Repositórios com dependências
         self.connections = ConnectionRepository(self.db_manager, self.users)

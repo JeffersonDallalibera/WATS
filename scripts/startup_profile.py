@@ -4,6 +4,7 @@ import sys
 
 print('PID', sys.pid if hasattr(sys, 'pid') else '')
 
+
 def time_import(name):
     t0 = time.perf_counter()
     try:
@@ -16,7 +17,16 @@ def time_import(name):
     t1 = time.perf_counter()
     print(f"IMPORT {name:20} | {t1-t0:0.3f}s | {'OK' if ok else 'ERR'} {err}")
 
-modules = ['dotenv','customtkinter','tkinter','pyodbc','psycopg2','json','socket','threading']
+
+modules = [
+    'dotenv',
+    'customtkinter',
+    'tkinter',
+    'pyodbc',
+    'psycopg2',
+    'json',
+    'socket',
+    'threading']
 for m in modules:
     time_import(m)
 

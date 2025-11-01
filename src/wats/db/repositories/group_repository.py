@@ -1,12 +1,16 @@
 # WATS_Project/wats_app/db/repositories/group_repository.py
 import logging
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Dict, List, Optional, Tuple
+
+from src.wats.db.exceptions import DatabaseConnectionError, DatabaseQueryError
 from src.wats.db.repositories.base_repository import BaseRepository
-from src.wats.db.exceptions import DatabaseQueryError, DatabaseConnectionError
+from src.wats.performance import cache_groups, invalidate_group_caches
+
 
 class GroupRepository(BaseRepository):
     """Gerencia operações de Grupos (Grupo_WTS)."""
 
+    @cache_groups(ttl=300)
     def admin_get_all_groups(self) -> List[Tuple]:
         query = "SELECT Gru_Codigo, Gru_Nome FROM Grupo_WTS ORDER BY Gru_Nome"
         try:
@@ -28,7 +32,7 @@ class GroupRepository(BaseRepository):
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, (group_id,))
                 result = cursor.fetchone()
-                if result: 
+                if result:
                     return {"nome": result[0], "desc": result[1] or ""}
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao buscar detalhes do grupo {group_id}: {e}")
@@ -42,10 +46,12 @@ class GroupRepository(BaseRepository):
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, (nome, desc))
+                invalidate_group_caches()
                 return True, "Grupo criado."
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao CRIAR grupo: {e}")
-            if "UNIQUE KEY" in str(e) or "unique constraint" in str(e): return False, f"Erro: Nome '{nome}' já existe."
+            if "UNIQUE KEY" in str(e) or "unique constraint" in str(e):
+                return False, f"Erro: Nome '{nome}' já existe."
             return False, f"Erro DB: {e}"
 
     def admin_update_group(self, group_id: int, nome: str, desc: Optional[str]) -> Tuple[bool, str]:
@@ -55,10 +61,12 @@ class GroupRepository(BaseRepository):
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, (nome, desc, group_id))
+                invalidate_group_caches()
                 return True, "Grupo atualizado."
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao ATUALIZAR grupo: {e}")
-            if "UNIQUE KEY" in str(e) or "unique constraint" in str(e): return False, f"Erro: Nome '{nome}' já existe."
+            if "UNIQUE KEY" in str(e) or "unique constraint" in str(e):
+                return False, f"Erro: Nome '{nome}' já existe."
             return False, f"Erro DB: {e}"
 
     def admin_delete_group(self, group_id: int) -> Tuple[bool, str]:
@@ -68,9 +76,10 @@ class GroupRepository(BaseRepository):
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, (group_id,))
+                invalidate_group_caches()
                 return True, "Grupo deletado."
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao DELETAR grupo: {e}")
-            if "REFERENCE constraint" in str(e) or "foreign key constraint" in str(e): 
+            if "REFERENCE constraint" in str(e) or "foreign key constraint" in str(e):
                 return False, "Erro: Grupo em uso por conexões ou permissões."
             return False, f"Erro DB: {e}"

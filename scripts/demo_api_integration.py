@@ -20,6 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
+
 def create_test_config():
     """Create a test configuration with API enabled."""
     return {
@@ -63,6 +64,7 @@ def create_test_config():
         }
     }
 
+
 def create_mock_settings(config_data):
     """Create a mock settings object from config data."""
     class MockSettings:
@@ -74,7 +76,7 @@ def create_mock_settings(config_data):
             self.DB_UID = config['database']['username']
             self.DB_PWD = config['database']['password']
             self.DB_PORT = config['database']['port']
-            
+
             # Recording settings
             self.RECORDING_ENABLED = config['recording']['enabled']
             self.RECORDING_AUTO_START = config['recording']['auto_start']
@@ -88,7 +90,7 @@ def create_mock_settings(config_data):
             self.RECORDING_MAX_TOTAL_SIZE_GB = config['recording']['max_total_size_gb']
             self.RECORDING_MAX_FILE_AGE_DAYS = config['recording']['max_file_age_days']
             self.RECORDING_CLEANUP_INTERVAL_HOURS = config['recording']['cleanup_interval_hours']
-            
+
             # API settings
             self.API_ENABLED = config['api']['enabled']
             self.API_BASE_URL = config['api']['base_url']
@@ -100,31 +102,32 @@ def create_mock_settings(config_data):
             self.API_DELETE_AFTER_UPLOAD = config['api']['delete_after_upload']
             self.API_UPLOAD_OLDER_RECORDINGS = config['api']['upload_older_recordings']
             self.API_MAX_FILE_AGE_DAYS = config['api']['max_file_age_days']
-            
+
             # User data directory for state files
             self.USER_DATA_DIR = "./test_user_data"
             os.makedirs(self.USER_DATA_DIR, exist_ok=True)
-        
+
         def validate_recording_config(self):
             return True
-        
+
         def validate_api_config(self):
             return True
-    
+
     return MockSettings(config_data)
+
 
 def create_test_recording_files():
     """Create test recording files for demonstration."""
     recordings_dir = Path("./test_recordings")
     recordings_dir.mkdir(exist_ok=True)
-    
+
     # Create test video file
     session_id = "demo_session_123"
     video_file = recordings_dir / f"{session_id}_DemoServer_20241026_220000.mp4"
-    
+
     with open(video_file, 'wb') as f:
         f.write(b"fake video content for demo" * 1000)  # ~25KB
-    
+
     # Create metadata file
     metadata = {
         "session_id": session_id,
@@ -148,76 +151,77 @@ def create_test_recording_files():
             "max_duration_minutes": 30
         }
     }
-    
+
     metadata_file = recordings_dir / f"{session_id}_metadata.json"
     with open(metadata_file, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2, ensure_ascii=False)
-    
-    print(f"✅ Created test recording files:")
+
+    print("✅ Created test recording files:")
     print(f"   📹 Video: {video_file} ({video_file.stat().st_size:,} bytes)")
     print(f"   📄 Metadata: {metadata_file}")
-    
+
     return video_file, metadata_file
+
 
 def demo_api_integration():
     """Demonstrate the complete API integration workflow."""
     print("🚀 WATS API Upload System - Integration Demo")
     print("=" * 50)
-    
+
     # Create test configuration
     config = create_test_config()
     settings = create_mock_settings(config)
-    
+
     print("📋 Configuration loaded:")
     print(f"   🎯 API Enabled: {settings.API_ENABLED}")
     print(f"   🌐 API URL: {settings.API_BASE_URL}")
     print(f"   ⚡ Auto Upload: {settings.API_AUTO_UPLOAD}")
     print(f"   🔄 Max Retries: {settings.API_MAX_RETRIES}")
     print(f"   📁 Recording Dir: {settings.RECORDING_OUTPUT_DIR}")
-    
+
     # Create test recording files
-    print(f"\n📁 Creating test recording files...")
+    print("\n📁 Creating test recording files...")
     video_file, metadata_file = create_test_recording_files()
-    
+
     # Initialize API system (this would normally be done in the main app)
     try:
         from src.wats.api import ApiIntegrationManager
-        
-        print(f"\n🔧 Initializing API integration...")
+
+        print("\n🔧 Initializing API integration...")
         api_manager = ApiIntegrationManager(settings)
-        
+
         if not api_manager.is_initialized:
             print("❌ API integration failed to initialize")
             print("   💡 This is expected in demo mode (no real API server)")
             return
-        
+
         # Set up callbacks for monitoring
         def on_upload_started(task_id: str, filename: str):
             print(f"🚀 Upload started: {filename} (task: {task_id})")
-        
+
         def on_upload_progress(task_id: str, progress: int):
             print(f"📊 Upload progress: {task_id} - {progress}%")
-        
+
         def on_upload_completed(task_id: str, server_file_id: str):
             print(f"✅ Upload completed: {task_id} -> {server_file_id}")
-        
+
         def on_upload_failed(task_id: str, error: str):
             print(f"❌ Upload failed: {task_id} - {error}")
-        
+
         api_manager.on_upload_started = on_upload_started
         api_manager.on_upload_progress = on_upload_progress
         api_manager.on_upload_completed = on_upload_completed
         api_manager.on_upload_failed = on_upload_failed
-        
+
         # Queue test upload
-        print(f"\n📤 Queuing recording for upload...")
+        print("\n📤 Queuing recording for upload...")
         task_id = api_manager.upload_recording(video_file, metadata_file)
-        
+
         if task_id:
             print(f"✅ Upload queued successfully: {task_id}")
-            
+
             # Monitor upload status
-            print(f"\n📊 Monitoring upload status...")
+            print("\n📊 Monitoring upload status...")
             for i in range(5):
                 status = api_manager.get_upload_status(task_id)
                 if status:
@@ -225,44 +229,45 @@ def demo_api_integration():
                     if status['status'] in ['completed', 'failed']:
                         break
                 time.sleep(1)
-            
+
             # Show queue status
             queue_status = api_manager.get_queue_status()
-            print(f"\n📈 Upload Queue Status:")
+            print("\n📈 Upload Queue Status:")
             print(f"   Queue Size: {queue_status['queue_size']}")
             print(f"   Active Uploads: {queue_status['active_uploads']}")
             print(f"   Completed: {queue_status['completed_uploads']}")
             print(f"   Failed: {queue_status['failed_uploads']}")
         else:
             print("❌ Failed to queue upload")
-        
+
         # Demonstrate older recordings upload
-        print(f"\n📂 Demonstrating older recordings upload...")
+        print("\n📂 Demonstrating older recordings upload...")
         task_ids = api_manager.upload_older_recordings(Path(settings.RECORDING_OUTPUT_DIR))
         print(f"   Found and queued {len(task_ids)} older recordings")
-        
+
         # Cleanup
         api_manager.shutdown()
-        print(f"\n🧹 API integration shutdown complete")
-        
+        print("\n🧹 API integration shutdown complete")
+
     except ImportError as e:
         print(f"❌ API system not available: {e}")
         print("   💡 Make sure all dependencies are installed")
     except Exception as e:
         print(f"💥 Error during demo: {e}")
-    
-    print(f"\n🎯 Integration Demo Summary:")
-    print(f"   ✅ Configuration: Loaded successfully")
-    print(f"   ✅ Test Files: Created successfully")
-    print(f"   ✅ API Integration: Demonstrated key features")
-    print(f"   ✅ Upload Flow: Showed complete workflow")
-    print(f"   ✅ Monitoring: Displayed status tracking")
+
+    print("\n🎯 Integration Demo Summary:")
+    print("   ✅ Configuration: Loaded successfully")
+    print("   ✅ Test Files: Created successfully")
+    print("   ✅ API Integration: Demonstrated key features")
+    print("   ✅ Upload Flow: Showed complete workflow")
+    print("   ✅ Monitoring: Displayed status tracking")
+
 
 def show_configuration_examples():
     """Show various configuration examples."""
-    print(f"\n🔧 Configuration Examples for Different Scenarios:")
+    print("\n🔧 Configuration Examples for Different Scenarios:")
     print("=" * 55)
-    
+
     # Basic configuration
     print("1. 📋 Basic Configuration (Small Office):")
     basic_config = {
@@ -276,9 +281,9 @@ def show_configuration_examples():
         }
     }
     print(json.dumps(basic_config, indent=2))
-    
+
     # High-volume configuration
-    print(f"\n2. 🏢 Enterprise Configuration (High Volume):")
+    print("\n2. 🏢 Enterprise Configuration (High Volume):")
     enterprise_config = {
         "api": {
             "enabled": True,
@@ -293,9 +298,9 @@ def show_configuration_examples():
         }
     }
     print(json.dumps(enterprise_config, indent=2))
-    
+
     # Development configuration
-    print(f"\n3. 🔧 Development Configuration (Testing):")
+    print("\n3. 🔧 Development Configuration (Testing):")
     dev_config = {
         "api": {
             "enabled": True,
@@ -310,10 +315,11 @@ def show_configuration_examples():
     }
     print(json.dumps(dev_config, indent=2))
 
+
 if __name__ == "__main__":
     demo_api_integration()
     show_configuration_examples()
-    
-    print(f"\n🎉 Demo completed!")
-    print(f"💡 The API upload system is ready for production use.")
-    print(f"📚 See docs/api_upload_system.md for detailed documentation.")
+
+    print("\n🎉 Demo completed!")
+    print("💡 The API upload system is ready for production use.")
+    print("📚 See docs/api_upload_system.md for detailed documentation.")

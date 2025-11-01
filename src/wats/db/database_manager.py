@@ -1,6 +1,7 @@
 # WATS_Project/wats_app/db/database_manager.py
 import logging
-from typing import Optional, Any
+from typing import Any, Optional
+
 from src.wats.config import Settings, is_demo_mode
 from src.wats.db.exceptions import DatabaseConfigError, DatabaseConnectionError
 
@@ -10,19 +11,20 @@ from src.wats.db.exceptions import DatabaseConfigError, DatabaseConnectionError
 # even if the driver won't be used. Moving imports reduces initial
 # import latency.
 
+
 class DatabaseManager:
     """Gerencia a conexão e a sintaxe (dialeto) para múltiplos bancos."""
-    
+
     def __init__(self, settings: Settings):
         self.db_type = settings.DB_TYPE
         self.driver_module: Any = None
         self.connection_string = ""
         self.is_demo = is_demo_mode()
-        
+
         # Propriedades de Dialeto SQL
         self.NOW: str = ""
         self.CURRENT_TIMESTAMP: str = "getdate()"  # Alias para NOW
-        self.PARAM: str = "" # Placeholder (e.g., ? ou %s)
+        self.PARAM: str = ""  # Placeholder (e.g., ? ou %s)
         self.ISNULL: str = ""
         self.IDENTITY_QUERY: str = ""
 
@@ -33,12 +35,14 @@ class DatabaseManager:
             return
 
         try:
-            if self.db_type == 'sqlserver':
+            if self.db_type == "sqlserver":
                 self._configure_sqlserver(settings)
-            elif self.db_type == 'sqlite':
+            elif self.db_type == "sqlite":
                 self._configure_sqlite(settings)
             else:
-                raise DatabaseConfigError(f"DB_TYPE '{self.db_type}' não suportado. Use 'sqlserver' ou 'sqlite'.")
+                raise DatabaseConfigError(
+                    f"DB_TYPE '{self.db_type}' não suportado. Use 'sqlserver' ou 'sqlite'."
+                )
         except Exception as e:
             logging.error(f"Erro fatal ao configurar DatabaseManager: {e}")
             raise DatabaseConfigError(f"Erro ao ler as configurações do banco: {e}")
@@ -57,7 +61,9 @@ class DatabaseManager:
         try:
             import pyodbc
         except ImportError:
-            raise DatabaseConfigError("Driver 'pyodbc' não instalado. Execute 'pip install pyodbc'.")
+            raise DatabaseConfigError(
+                "Driver 'pyodbc' não instalado. Execute 'pip install pyodbc'."
+            )
 
         # Assign the imported module only when SQL Server is configured
         self.driver_module = pyodbc
@@ -86,31 +92,31 @@ class DatabaseManager:
         self.driver_module = sqlite3
         db_path = s.DB_DATABASE or "wats.db"
         self.connection_string = db_path
-        
+
         # Dialeto SQLite
         self.NOW = "datetime('now')"
         self.CURRENT_TIMESTAMP = "datetime('now')"
         self.PARAM = "?"
         self.ISNULL = "IFNULL"
-        self.IDENTITY_QUERY = "SELECT last_insert_rowid() AS ID;" 
+        self.IDENTITY_QUERY = "SELECT last_insert_rowid() AS ID;"
 
     def _get_connection(self) -> Any:
         """Retorna um objeto de conexão (para transações)."""
         try:
-            if self.conn is None or (hasattr(self.conn, 'closed') and self.conn.closed):
+            if self.conn is None or (hasattr(self.conn, "closed") and self.conn.closed):
                 self.conn = self.driver_module.connect(self.connection_string)
-            
+
             # Configura modo transacional se disponível
-            if hasattr(self.conn, 'autocommit'):
+            if hasattr(self.conn, "autocommit"):
                 self.conn.autocommit = False
-                
+
             return self.conn
         except Exception as e:
             logging.error(f"Não foi possível conectar (transação): {e}")
             try:
                 # Tenta reconectar
                 self.conn = self.driver_module.connect(self.connection_string)
-                if hasattr(self.conn, 'autocommit'):
+                if hasattr(self.conn, "autocommit"):
                     self.conn.autocommit = False
                 return self.conn
             except Exception as e_inner:
@@ -134,22 +140,24 @@ class DatabaseManager:
         if self.is_demo:
             logging.debug("[DEMO] get_cursor() retornando None - usando mock service")
             return None
-            
+
         try:
             return self._connect_autocommit().cursor()
         except Exception as e:
             logging.error(f"Falha ao obter cursor com autocommit: {e}")
-            return None # Repositórios devem checar
+            return None  # Repositórios devem checar
 
     def get_transactional_connection(self) -> Any:
         """Retorna a conexão compartilhada para transações."""
         # Em modo demo, retorna None para forçar uso do mock service
         if self.is_demo:
-            logging.debug("[DEMO] get_transactional_connection() retornando None - usando mock service")
+            logging.debug(
+                "[DEMO] get_transactional_connection() retornando None - usando mock service"
+            )
             return None
-            
+
         try:
             return self._get_connection()
         except Exception as e:
             logging.error(f"Falha ao obter conexão transacional: {e}")
-            return None # Repositórios devem checar
+            return None  # Repositórios devem checar

@@ -1,23 +1,33 @@
 # WATS_Project/wats_app/db/repositories/connection_repository.py
 import logging
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+
 from src.wats.db.database_manager import DatabaseManager
+from src.wats.db.exceptions import DatabaseConnectionError, DatabaseQueryError
 from src.wats.db.repositories.base_repository import BaseRepository
-from src.wats.db.exceptions import DatabaseQueryError, DatabaseConnectionError
+from src.wats.performance import cache_connections, invalidate_connection_caches
+
+if TYPE_CHECKING:
+    from src.wats.db.repositories.user_repository import UserRepository
+
 
 class ConnectionRepository(BaseRepository):
     """Gerencia operações de Conexões (Conexao_WTS)."""
 
-    def __init__(self, db_manager: DatabaseManager, user_repo: 'UserRepository'):
+    def __init__(self, db_manager: DatabaseManager, user_repo: "UserRepository"):
         super().__init__(db_manager)
-        self.user_repo = user_repo # Dependência para pegar permissões
+        self.user_repo = user_repo  # Dependência para pegar permissões
         # Import aqui para evitar circular imports
-        from src.wats.db.repositories.individual_permission_repository import IndividualPermissionRepository
+        from src.wats.db.repositories.individual_permission_repository import (
+            IndividualPermissionRepository,
+        )
+
         self.individual_perm_repo = IndividualPermissionRepository(db_manager)
 
+    @cache_connections(ttl=60)
     def select_all(self, username: str) -> List[Any]:
         user_id, is_admin = self.user_repo.get_user_role(username)
-        
+
         # Dialeto: ISNULL -> COALESCE
         base_query = f"""
             SELECT
@@ -32,34 +42,31 @@ class ConnectionRepository(BaseRepository):
                 SELECT Con_Codigo,
                     (CASE
                         WHEN MIN(Usu_Nome) = MAX(Usu_Nome) THEN MIN(Usu_Nome)
-                        ELSE MIN(Usu_Nome) || '|' || MAX(Usu_Nome) -- PG usa || para concatenar
+                        ELSE MIN(Usu_Nome) + '|' + MAX(Usu_Nome)
                     END) AS Usu_Nome
                 FROM usuario_conexao_wts
                 GROUP BY Con_Codigo
             ) Uco ON Con.Con_Codigo = Uco.Con_Codigo
             LEFT JOIN conexao_wts C2 ON Con.Con_Codigo = C2.Con_Codigo
         """
-        # Ajuste específico para SQL Server (que não usa ||)
-        if self.db.db_type == 'sqlserver':
-             base_query = base_query.replace("|| '|' ||", "+ '|' +")
-             
+
         where_clause = "WHERE Con.Gru_Codigo <> 33"
         params = []
-        
+
         if not is_admin:
-            if user_id is None: 
+            if user_id is None:
                 return []
-            
+
             # Nova lógica: verificar TANTO permissões de grupo QUANTO permissões individuais
             where_clause += f""" AND (
                 EXISTS (
-                    SELECT 1 FROM Permissao_Grupo_WTS p 
+                    SELECT 1 FROM Permissao_Grupo_WTS p
                     WHERE p.Usu_Id = {self.db.PARAM} AND p.Gru_Codigo = Con.Gru_Codigo
                 )
                 OR EXISTS (
                     SELECT 1 FROM Permissao_Conexao_Individual_WTS pci
-                    WHERE pci.Usu_Id = {self.db.PARAM} 
-                    AND pci.Con_Codigo = Con.Con_Codigo 
+                    WHERE pci.Usu_Id = {self.db.PARAM}
+                    AND pci.Con_Codigo = Con.Con_Codigo
                     AND pci.Ativo = {self.db.PARAM}
                     AND pci.Data_Inicio <= {self.db.PARAM}
                     AND (pci.Data_Fim IS NULL OR pci.Data_Fim >= {self.db.PARAM})
@@ -67,9 +74,10 @@ class ConnectionRepository(BaseRepository):
             )"""
             # Adicionamos os parâmetros: user_id (2x), True, now (2x)
             from datetime import datetime
+
             now = datetime.now()
             params.extend([user_id, user_id, True, now, now])
-            
+
         order_clause = f"ORDER BY {self.db.ISNULL}(Gru.Gru_Nome, Con.Con_Nome), Con.Con_Nome"
         query = f"{base_query} {where_clause} {order_clause}"
         try:
@@ -83,11 +91,12 @@ class ConnectionRepository(BaseRepository):
             raise DatabaseQueryError(f"Erro ao buscar dados: {e}")
         return []
 
+    @cache_connections(ttl=60)
     def admin_get_all_connections(self) -> List[Tuple]:
         query = f"""
-            SELECT c.Con_Codigo, c.Con_Nome, g.Gru_Nome, c.con_tipo 
-            FROM Conexao_WTS c 
-            LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo 
+            SELECT c.Con_Codigo, c.Con_Nome, g.Gru_Nome, c.con_tipo
+            FROM Conexao_WTS c
+            LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo
             ORDER BY {self.db.ISNULL}(g.Gru_Nome, c.Con_Nome), c.Con_Nome
         """
         try:
@@ -107,17 +116,17 @@ class ConnectionRepository(BaseRepository):
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
-                    
+
                 cursor.execute(query, (con_id,))
                 result = cursor.fetchone()
-                
+
                 if result:
                     # Converte o resultado (seja pyodbc.Row ou tupla psycopg2) para dict
-                    if hasattr(result, "cursor_description"): # pyodbc
+                    if hasattr(result, "cursor_description"):  # pyodbc
                         return dict(zip([col[0] for col in result.cursor_description], result))
-                    elif hasattr(cursor, "description"): # psycopg2
-                         return dict(zip([col.name for col in cursor.description], result))
-                         
+                    elif hasattr(cursor, "description"):  # psycopg2
+                        return dict(zip([col.name for col in cursor.description], result))
+
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao buscar detalhes da conexão {con_id}: {e}")
             raise DatabaseQueryError(f"Admin: Erro ao buscar detalhes da conexão: {e}")
@@ -125,22 +134,30 @@ class ConnectionRepository(BaseRepository):
 
     def admin_create_connection(self, data: Dict[str, Any]) -> Tuple[bool, str]:
         query = f"""
-            INSERT INTO Conexao_WTS 
-            (con_nome, gru_codigo, con_ip, con_usuario, con_senha, 
+            INSERT INTO Conexao_WTS
+            (con_nome, gru_codigo, con_ip, con_usuario, con_senha,
              con_particularidade, con_cliente, extra, sec, con_tipo)
-            VALUES ({self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, 
+            VALUES ({self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM},
                     {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM})
         """
         params = (
-            data.get('con_nome'), data.get('gru_codigo'), data.get('con_ip'), data.get('con_usuario'),
-            data.get('con_senha'), data.get('con_particularidade'), data.get('con_cliente'), data.get('extra'),
-            data.get('sec', None), data.get('con_tipo', 'RDP') # Assume RDP se não especificado
+            data.get("con_nome"),
+            data.get("gru_codigo"),
+            data.get("con_ip"),
+            data.get("con_usuario"),
+            data.get("con_senha"),
+            data.get("con_particularidade"),
+            data.get("con_cliente"),
+            data.get("extra"),
+            data.get("sec", None),
+            data.get("con_tipo", "RDP"),  # Assume RDP se não especificado
         )
         try:
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, params)
+                invalidate_connection_caches()
                 return True, "Conexão criada."
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao CRIAR conexão: {e}")
@@ -149,23 +166,31 @@ class ConnectionRepository(BaseRepository):
     def admin_update_connection(self, con_id: int, data: Dict[str, Any]) -> Tuple[bool, str]:
         query = f"""
             UPDATE Conexao_WTS
-            SET con_nome = {self.db.PARAM}, gru_codigo = {self.db.PARAM}, con_ip = {self.db.PARAM}, 
+            SET con_nome = {self.db.PARAM}, gru_codigo = {self.db.PARAM}, con_ip = {self.db.PARAM},
                 con_usuario = {self.db.PARAM}, con_senha = {self.db.PARAM},
-                con_particularidade = {self.db.PARAM}, con_cliente = {self.db.PARAM}, 
+                con_particularidade = {self.db.PARAM}, con_cliente = {self.db.PARAM},
                 extra = {self.db.PARAM}, sec = {self.db.PARAM}, con_tipo = {self.db.PARAM}
             WHERE Con_Codigo = {self.db.PARAM}
         """
         params = (
-            data.get('con_nome'), data.get('gru_codigo'), data.get('con_ip'), data.get('con_usuario'),
-            data.get('con_senha'), data.get('con_particularidade'), data.get('con_cliente'), data.get('extra'),
-            data.get('sec', None), data.get('con_tipo', 'RDP'),
-            con_id
+            data.get("con_nome"),
+            data.get("gru_codigo"),
+            data.get("con_ip"),
+            data.get("con_usuario"),
+            data.get("con_senha"),
+            data.get("con_particularidade"),
+            data.get("con_cliente"),
+            data.get("extra"),
+            data.get("sec", None),
+            data.get("con_tipo", "RDP"),
+            con_id,
         )
         try:
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, params)
+                invalidate_connection_caches()
                 return True, "Conexão atualizada."
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao ATUALIZAR conexão: {e}")
@@ -177,18 +202,20 @@ class ConnectionRepository(BaseRepository):
         q_conn = f"DELETE FROM Conexao_WTS WHERE Con_Codigo = {self.db.PARAM}"
 
         conn = self.db.get_transactional_connection()
-        if not conn: return False, "Falha ao conectar."
+        if not conn:
+            return False, "Falha ao conectar."
         try:
             with conn.cursor() as cursor:
                 cursor.execute(q_logs, (con_id,))
                 cursor.execute(q_access, (con_id,))
                 cursor.execute(q_conn, (con_id,))
                 conn.commit()
+                invalidate_connection_caches()
                 return True, "Conexão e logs relacionados deletados."
         except self.driver_module.Error as e:
             conn.rollback()
             logging.error(f"Admin: Erro ao DELETAR conexão {con_id}: {e}")
-            if "REFERENCE constraint" in str(e) or "foreign key constraint" in str(e): 
+            if "REFERENCE constraint" in str(e) or "foreign key constraint" in str(e):
                 return False, "Erro: Conexão referenciada em outra tabela."
             return False, f"Erro DB: {e}"
         except Exception as ex:
@@ -198,8 +225,9 @@ class ConnectionRepository(BaseRepository):
 
     # ========== MÉTODOS PARA PERMISSÕES INDIVIDUAIS ==========
 
-    def grant_individual_access(self, user_id: int, connection_id: int, granted_by_user_id: int, 
-                              observations: str = None) -> Tuple[bool, str]:
+    def grant_individual_access(
+        self, user_id: int, connection_id: int, granted_by_user_id: int, observations: str = None
+    ) -> Tuple[bool, str]:
         """Concede acesso individual permanente a uma conexão."""
         return self.individual_perm_repo.grant_individual_access(
             user_id, connection_id, granted_by_user_id, observations=observations
@@ -225,8 +253,8 @@ class ConnectionRepository(BaseRepository):
         """Retorna todas as conexões disponíveis para concessão individual."""
         query = f"""
             SELECT c.Con_Codigo, c.Con_Nome, c.Con_IP, g.Gru_Nome, c.con_tipo
-            FROM Conexao_WTS c 
-            LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo 
+            FROM Conexao_WTS c
+            LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo
             WHERE c.Gru_Codigo <> 33
             ORDER BY {self.db.ISNULL}(g.Gru_Nome, c.Con_Nome), c.Con_Nome
         """
@@ -244,7 +272,7 @@ class ConnectionRepository(BaseRepository):
         """Retorna todos os usuários disponíveis para concessão individual."""
         query = f"""
             SELECT Usu_Id, Usu_Nome, Usu_Is_Admin
-            FROM Usuario_Sistema_WTS 
+            FROM Usuario_Sistema_WTS
             WHERE Usu_Ativo = {self.db.PARAM}
             ORDER BY Usu_Nome
         """
