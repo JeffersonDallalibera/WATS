@@ -54,7 +54,27 @@ class ManageUserDialog(ctk.CTkToplevel):
         self._setup_individual_permissions_tab()
 
         self.transient(parent)
-        self.grab_set()
+        self.update_idletasks()  # Força renderização da janela
+        
+        # Carrega dados em background
+        self.after(50, self._load_initial_data)
+        
+    def _load_initial_data(self):
+        """Carrega dados iniciais em background após a janela ser exibida."""
+        try:
+            # Carrega dados da aba de usuários
+            self._load_all_users()
+            self._load_all_groups_checkboxes()
+            
+            # Remove label de loading
+            if hasattr(self, 'loading_label_users') and self.loading_label_users:
+                self.loading_label_users.destroy()
+                
+        except Exception as e:
+            logging.error(f"Erro ao carregar dados iniciais: {e}")
+            messagebox.showerror("Erro", f"Erro ao carregar dados: {e}")
+        finally:
+            self.grab_set()  # Apenas agora torna modal
 
     def _setup_users_tab(self):
         """Configura a aba de gerenciamento de usuários (funcionalidade original)."""
@@ -65,6 +85,15 @@ class ManageUserDialog(ctk.CTkToplevel):
         # --- Coluna da Esquerda (Lista com Filtro Reutilizável) ---
         self.user_filter_frame = create_user_filter_frame(self.tab_users)
         self.user_filter_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        # Label de loading (será removido após carregar)
+        self.loading_label_users = ctk.CTkLabel(
+            self.user_filter_frame,
+            text="⏳ Carregando usuários...",
+            font=("Segoe UI", 12, "italic"),
+            text_color="gray"
+        )
+        self.loading_label_users.place(relx=0.5, rely=0.5, anchor="center")
 
         # Vincula callback de seleção
         self.user_filter_frame.bind_selection(self._on_user_select)
@@ -157,10 +186,8 @@ class ManageUserDialog(ctk.CTkToplevel):
         )
         self.btn_new.grid(row=0, column=0, padx=5, sticky="ew")
 
-        # --- Inicialização ---
-        self._load_all_users()
-        self._load_all_groups_checkboxes()  # Renomeado para clareza
-        self._clear_form()
+        # --- Inicialização Otimizada ---
+        self._clear_form()  # Limpa form primeiro (instantâneo)
 
     def _setup_individual_permissions_tab(self):
         """Configura a aba de permissões individuais."""
@@ -267,6 +294,17 @@ class ManageUserDialog(ctk.CTkToplevel):
         # Variáveis para seleções
         self.selected_individual_user_id = None
         self.selected_individual_connection_id = None
+        
+        # Cache de dados para melhor performance
+        self._all_users_individual = []
+        self._all_connections_individual = []
+        
+        # Variáveis para debounce dos filtros
+        self._filter_users_job = None
+        self._filter_connections_job = None
+        
+        # Limite de itens exibidos para melhor performance
+        self.MAX_DISPLAYED_ITEMS = 100
 
         # Carregar dados iniciais
         self._load_users_individual()
@@ -274,7 +312,7 @@ class ManageUserDialog(ctk.CTkToplevel):
         self._load_active_individual_permissions()
 
     def _load_all_users(self, preserve_state=False):
-        """Busca todos os usuários do banco e preenche o FilterableTreeFrame."""
+        """Busca todos os usuários do banco e preenche o FilterableTreeFrame (otimizado)."""
         try:
             # A query retorna (Usu_Id, Usu_Nome, Usu_Ativo, Usu_Is_Admin)
             self.all_users = self.db.users.admin_get_all_users()
@@ -289,13 +327,16 @@ class ManageUserDialog(ctk.CTkToplevel):
                 self.user_filter_frame.set_data([])
             return
 
-        # Formata dados para o FilterableTreeFrame
-        formatted_users = []
-        for user in self.all_users:
-            user_id, nome, ativo, is_admin = user
-            is_admin_str = "Sim" if is_admin else "Não"
-            ativo_str = "Sim" if ativo else "Não"
-            formatted_users.append((user_id, nome, is_admin_str, ativo_str))
+        # Formata dados para o FilterableTreeFrame usando list comprehension (mais rápido)
+        formatted_users = [
+            (
+                user[0],                              # user_id
+                user[1],                              # nome
+                "Sim" if user[3] else "Não",         # is_admin
+                "Sim" if user[2] else "Não"          # ativo
+            )
+            for user in self.all_users
+        ]
 
         if preserve_state:
             self.user_filter_frame.update_data(formatted_users)
@@ -427,6 +468,8 @@ class ManageUserDialog(ctk.CTkToplevel):
                     messagebox.showinfo("Sucesso", f"Usuário '{username}' criado.")
                     self._load_all_users(preserve_state=True)
                     self._clear_form()
+                    # Limpar cache de usuários individuais para forçar recarga
+                    self._all_users_individual = []
                 else:
                     messagebox.showerror("Erro ao Criar", message)
             except Exception as e:
@@ -442,6 +485,8 @@ class ManageUserDialog(ctk.CTkToplevel):
                 if success:
                     messagebox.showinfo("Sucesso", f"Usuário '{username}' atualizado.")
                     self._load_all_users(preserve_state=True)
+                    # Limpar cache de usuários individuais para forçar recarga
+                    self._all_users_individual = []
                     # Mantém dados no form
                 else:
                     messagebox.showerror("Erro ao Atualizar", message)
@@ -459,52 +504,134 @@ class ManageUserDialog(ctk.CTkToplevel):
         for check in self.group_checkboxes.values():
             check.deselect()
 
+    def refresh_individual_permissions_cache(self):
+        """Limpa o cache das listas de permissões individuais para forçar recarga."""
+        self._all_users_individual = []
+        self._all_connections_individual = []
+        # Recarrega as listas se a aba de permissões individuais foi inicializada
+        if hasattr(self, 'users_filter_entry') and hasattr(self, 'connections_filter_entry'):
+            filter_users = self.users_filter_entry.get()
+            filter_conns = self.connections_filter_entry.get()
+            self._load_users_individual(filter_users)
+            self._load_connections_individual(filter_conns)
+
     # === MÉTODOS PARA PERMISSÕES INDIVIDUAIS ===
 
-    def _load_users_individual(self):
-        """Carrega usuários para a aba de permissões individuais."""
+    def _load_users_individual(self, filter_text: str = ""):
+        """Carrega usuários para a aba de permissões individuais com otimização."""
         if not self.individual_permission_repo:
             return
 
         try:
-            users = self.db.users.admin_get_all_users()
+            # Carregar todos os usuários apenas se o cache estiver vazio
+            if not self._all_users_individual:
+                self._all_users_individual = self.db.users.admin_get_all_users()
 
-            # Limpar lista atual
+            # Aplicar filtro
+            filter_text_lower = filter_text.lower().strip()
+            if filter_text_lower:
+                filtered_users = [
+                    user for user in self._all_users_individual
+                    if filter_text_lower in str(user[1]).lower()  # user[1] é o nome
+                ]
+            else:
+                filtered_users = self._all_users_individual
+
+            # Filtrar apenas usuários ativos
+            active_users = [user for user in filtered_users if user[2]]  # user[2] é is_active
+            
+            # Limitar número de itens exibidos para melhor performance
+            total_users = len(active_users)
+            displayed_users = active_users[:self.MAX_DISPLAYED_ITEMS]
+
+            # Limpar lista atual de forma eficiente
             for widget in self.users_listbox.winfo_children():
                 widget.destroy()
 
-            for user_id, username, is_active, is_admin in users:
-                if is_active:  # Só mostrar usuários ativos
-                    user_btn = ctk.CTkButton(
-                        self.users_listbox,
-                        text=f"{username} (ID: {user_id})",
-                        height=30,
-                        command=lambda uid=user_id: self._select_user_individual(uid),
-                        fg_color=(
-                            "gray40" if user_id != self.selected_individual_user_id else "blue"
-                        ),
-                    )
-                    user_btn.pack(fill="x", padx=5, pady=2)
+            # Mostrar aviso se houver muitos resultados
+            if total_users > self.MAX_DISPLAYED_ITEMS:
+                warning_label = ctk.CTkLabel(
+                    self.users_listbox,
+                    text=f"⚠️ Mostrando {self.MAX_DISPLAYED_ITEMS} de {total_users} usuários. Use o filtro para refinar.",
+                    font=("Segoe UI", 10, "italic"),
+                    text_color="orange"
+                )
+                warning_label.pack(pady=5)
+
+            # Mostrar usuários ativos e filtrados
+            for user_id, username, is_active, is_admin in displayed_users:
+                user_btn = ctk.CTkButton(
+                    self.users_listbox,
+                    text=username,
+                    height=30,
+                    command=lambda uid=user_id: self._select_user_individual(uid),
+                    fg_color=(
+                        "gray40" if user_id != self.selected_individual_user_id else "blue"
+                    ),
+                )
+                user_btn.pack(fill="x", padx=5, pady=2)
+                
+            # Mostrar mensagem se não houver resultados
+            if not displayed_users:
+                no_results = ctk.CTkLabel(
+                    self.users_listbox,
+                    text="Nenhum usuário ativo encontrado",
+                    font=("Segoe UI", 11),
+                    text_color="gray"
+                )
+                no_results.pack(pady=20)
 
         except Exception as e:
             logging.error(f"Erro ao carregar usuários individuais: {e}")
 
-    def _load_connections_individual(self):
-        """Carrega conexões para a aba de permissões individuais."""
+    def _load_connections_individual(self, filter_text: str = ""):
+        """Carrega conexões para a aba de permissões individuais com otimização."""
         if not self.individual_permission_repo:
             return
 
         try:
-            connections = self.db.connections.admin_get_all_connections()
+            # Carregar todas as conexões apenas se o cache estiver vazio
+            if not self._all_connections_individual:
+                self._all_connections_individual = self.db.connections.admin_get_all_connections()
 
-            # Limpar lista atual
+            # Aplicar filtro
+            filter_text_lower = filter_text.lower().strip()
+            if filter_text_lower:
+                filtered_connections = [
+                    conn for conn in self._all_connections_individual
+                    if filter_text_lower in str(conn[1]).lower() or  # conn[1] é o nome da conexão
+                       (len(conn) > 4 and conn[4] and filter_text_lower in str(conn[4]).lower())  # conn[4] é o IP
+                ]
+            else:
+                filtered_connections = self._all_connections_individual
+
+            # Limitar número de itens exibidos para melhor performance
+            total_connections = len(filtered_connections)
+            displayed_connections = filtered_connections[:self.MAX_DISPLAYED_ITEMS]
+            
+            # Limpar lista atual de forma eficiente
             for widget in self.connections_listbox.winfo_children():
                 widget.destroy()
 
-            for conn_id, conn_name, group_name, conn_type in connections:
+            # Mostrar aviso se houver muitos resultados
+            if total_connections > self.MAX_DISPLAYED_ITEMS:
+                warning_label = ctk.CTkLabel(
+                    self.connections_listbox,
+                    text=f"⚠️ Mostrando {self.MAX_DISPLAYED_ITEMS} de {total_connections} conexões. Use o filtro para refinar.",
+                    font=("Segoe UI", 10, "italic"),
+                    text_color="orange"
+                )
+                warning_label.pack(pady=5)
+
+            # Mostrar conexões filtradas (apenas nome, como na tela inicial)
+            # Formato: (Con_Codigo, Con_Nome, Gru_Nome, con_tipo, Con_IP)
+            for conn in displayed_connections:
+                conn_id = conn[0]
+                conn_name = conn[1]
+                
                 conn_btn = ctk.CTkButton(
                     self.connections_listbox,
-                    text=f"{conn_name} (ID: {conn_id})",
+                    text=conn_name,  # Apenas o nome, sem ID ou IP
                     height=30,
                     command=lambda cid=conn_id: self._select_connection_individual(cid),
                     fg_color=(
@@ -512,6 +639,16 @@ class ManageUserDialog(ctk.CTkToplevel):
                     ),
                 )
                 conn_btn.pack(fill="x", padx=5, pady=2)
+                
+            # Mostrar mensagem se não houver resultados
+            if not displayed_connections:
+                no_results = ctk.CTkLabel(
+                    self.connections_listbox,
+                    text="Nenhuma conexão encontrada",
+                    font=("Segoe UI", 11),
+                    text_color="gray"
+                )
+                no_results.pack(pady=20)
 
         except Exception as e:
             logging.error(f"Erro ao carregar conexões individuais: {e}")
@@ -585,23 +722,45 @@ class ManageUserDialog(ctk.CTkToplevel):
     def _select_user_individual(self, user_id):
         """Seleciona um usuário na aba de permissões individuais."""
         self.selected_individual_user_id = user_id
-        self._load_users_individual()  # Atualizar cores dos botões
+        # Recarrega com filtro atual preservado
+        filter_text = self.users_filter_entry.get()
+        self._load_users_individual(filter_text)
         self._load_active_individual_permissions()  # Recarregar permissões do usuário selecionado
 
     def _select_connection_individual(self, conn_id):
         """Seleciona uma conexão na aba de permissões individuais."""
         self.selected_individual_connection_id = conn_id
-        self._load_connections_individual()  # Atualizar cores dos botões
+        # Recarrega com filtro atual preservado
+        filter_text = self.connections_filter_entry.get()
+        self._load_connections_individual(filter_text)
 
     def _filter_users_individual(self, event=None):
-        """Filtra a lista de usuários."""
-        # Implementação simples - recarregar lista (pode ser melhorada)
-        self._load_users_individual()
+        """Filtra a lista de usuários conforme texto digitado (com debounce)."""
+        # Cancela job anterior se existir
+        if self._filter_users_job:
+            self.after_cancel(self._filter_users_job)
+        
+        # Agenda nova busca após 300ms (debounce)
+        self._filter_users_job = self.after(300, self._do_filter_users_individual)
+    
+    def _do_filter_users_individual(self):
+        """Executa o filtro de usuários (chamado após debounce)."""
+        filter_text = self.users_filter_entry.get()
+        self._load_users_individual(filter_text)
 
     def _filter_connections_individual(self, event=None):
-        """Filtra a lista de conexões."""
-        # Implementação simples - recarregar lista (pode ser melhorada)
-        self._load_connections_individual()
+        """Filtra a lista de conexões conforme texto digitado (com debounce)."""
+        # Cancela job anterior se existir
+        if self._filter_connections_job:
+            self.after_cancel(self._filter_connections_job)
+        
+        # Agenda nova busca após 300ms (debounce)
+        self._filter_connections_job = self.after(300, self._do_filter_connections_individual)
+    
+    def _do_filter_connections_individual(self):
+        """Executa o filtro de conexões (chamado após debounce)."""
+        filter_text = self.connections_filter_entry.get()
+        self._load_connections_individual(filter_text)
 
     def _grant_individual_permission(self):
         """Concede permissão individual para usuário e conexão selecionados."""

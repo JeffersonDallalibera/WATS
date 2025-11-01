@@ -36,6 +36,15 @@ class ManageConnectionDialog(ctk.CTkToplevel):
         # --- Coluna da Esquerda (Lista com Filtro Reutilizável) ---
         self.connection_filter_frame = create_connection_filter_frame(self)
         self.connection_filter_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        # Label de loading (será removido após carregar)
+        self.loading_label = ctk.CTkLabel(
+            self.connection_filter_frame,
+            text="⏳ Carregando conexões...",
+            font=("Segoe UI", 12, "italic"),
+            text_color="gray"
+        )
+        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Adiciona botão de deletar ao frame do filtro
         self.btn_delete_conn = ctk.CTkButton(
@@ -145,13 +154,32 @@ class ManageConnectionDialog(ctk.CTkToplevel):
         )
         self.btn_new.grid(row=0, column=0, padx=5, sticky="ew")
 
-        # --- Inicialização ---
-        self._load_all_connections()
-        self._load_groups_for_dropdown()
-        self._clear_form()
-
+        # --- Inicialização Otimizada (Assíncrona) ---
+        self._clear_form()  # Limpa form primeiro (instantâneo)
+        
+        # Mostra janela antes de carregar dados
         self.transient(parent)
-        self.grab_set()
+        self.update_idletasks()  # Força renderização da janela
+        
+        # Carrega dados em background
+        self.after(50, self._load_initial_data)
+
+    def _load_initial_data(self):
+        """Carrega dados iniciais em background após a janela ser exibida."""
+        try:
+            # Carrega grupos e conexões
+            self._load_groups_for_dropdown()
+            self._load_all_connections()
+            
+            # Remove label de loading
+            if hasattr(self, 'loading_label') and self.loading_label:
+                self.loading_label.destroy()
+                
+        except Exception as e:
+            logging.error(f"Erro ao carregar dados iniciais: {e}")
+            messagebox.showerror("Erro", f"Erro ao carregar dados: {e}")
+        finally:
+            self.grab_set()  # Apenas agora torna modal
 
     def _gerar_link_wiki(self):
         """Gera o link da wiki automaticamente baseado na chave do cliente."""
@@ -311,7 +339,7 @@ class ManageConnectionDialog(ctk.CTkToplevel):
         self.group_var.set(group_names_list[0])  # Define "(Nenhum grupo)" como padrão inicial
 
     def _load_all_connections(self, preserve_state=False):
-        """Busca todas as conexões do banco e preenche o FilterableTreeFrame."""
+        """Busca todas as conexões do banco e preenche o FilterableTreeFrame (otimizado)."""
         try:
             self.all_connections = self.db.connections.admin_get_all_connections()
         except Exception as e:
@@ -319,16 +347,23 @@ class ManageConnectionDialog(ctk.CTkToplevel):
                 "Erro de Banco de Dados", f"Não foi possível carregar as conexões:\n{e}"
             )
             self.all_connections = []
+            return
 
-        # Converte para formato esperado pelo FilterableTreeFrame
-        # Formato: (id, nome, host, porta)
-        connections_for_display = []
-        for conn in self.all_connections:
-            conn_id, conn_nome = conn[0], conn[1]
-            # Busca IP/Host e Porta (assumindo que estão nas colunas corretas)
-            conn_ip = conn[4] if len(conn) > 4 else ""  # IP/Host
-            conn_porta = conn[5] if len(conn) > 5 else "3389"  # Porta padrão RDP
-            connections_for_display.append((conn_id, conn_nome, conn_ip, conn_porta))
+        # Converte para formato esperado pelo FilterableTreeFrame de forma otimizada
+        # Formato da query: (Con_Codigo, Con_Nome, Gru_Nome, con_tipo, Con_IP)
+        # Formato esperado: (id, nome, host, porta)
+        
+        # Usa list comprehension para melhor performance
+        connections_for_display = [
+            (
+                conn[0],                           # Con_Codigo (id)
+                conn[1],                           # Con_Nome (nome)
+                conn[4] if len(conn) > 4 and conn[4] else "",  # Con_IP (host)
+                "3389" if len(conn) > 3 and conn[3] == "RDP" else "-"  # Porta baseada no tipo
+            )
+            for conn in self.all_connections
+            if len(conn) >= 2  # Validação mínima
+        ]
 
         if preserve_state:
             self.connection_filter_frame.update_data(connections_for_display)

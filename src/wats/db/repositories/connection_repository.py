@@ -93,10 +93,16 @@ class ConnectionRepository(BaseRepository):
 
     @cache_connections(ttl=60)
     def admin_get_all_connections(self) -> List[Tuple]:
+        """
+        Retorna todas as conexões ATIVAS (exclui grupo 33 - Inativo).
+        Usado nos painéis administrativos para listagem e gerenciamento.
+        """
         query = f"""
-            SELECT c.Con_Codigo, c.Con_Nome, g.Gru_Nome, c.con_tipo
+            SELECT c.Con_Codigo, c.Con_Nome, g.Gru_Nome, c.con_tipo, 
+                   {self.db.ISNULL}(c.Con_IP, '') AS Con_IP
             FROM Conexao_WTS c
             LEFT JOIN Grupo_WTS g ON c.Gru_Codigo = g.Gru_Codigo
+            WHERE c.Gru_Codigo <> 33 OR c.Gru_Codigo IS NULL
             ORDER BY {self.db.ISNULL}(g.Gru_Nome, c.Con_Nome), c.Con_Nome
         """
         try:
@@ -121,11 +127,9 @@ class ConnectionRepository(BaseRepository):
                 result = cursor.fetchone()
 
                 if result:
-                    # Converte o resultado (seja pyodbc.Row ou tupla psycopg2) para dict
-                    if hasattr(result, "cursor_description"):  # pyodbc
-                        return dict(zip([col[0] for col in result.cursor_description], result))
-                    elif hasattr(cursor, "description"):  # psycopg2
-                        return dict(zip([col.name for col in cursor.description], result))
+                    # Converte o resultado para dict usando cursor.description
+                    columns = [col[0] for col in cursor.description]
+                    return dict(zip(columns, result))
 
         except self.driver_module.Error as e:
             logging.error(f"Admin: Erro ao buscar detalhes da conexão {con_id}: {e}")

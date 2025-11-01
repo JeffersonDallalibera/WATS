@@ -31,6 +31,15 @@ class ManageGroupDialog(ctk.CTkToplevel):
         # --- Coluna da Esquerda (Lista com Filtro Reutilizável) ---
         self.group_filter_frame = create_group_filter_frame(self)
         self.group_filter_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        # Label de loading (será removido após carregar)
+        self.loading_label = ctk.CTkLabel(
+            self.group_filter_frame,
+            text="⏳ Carregando grupos...",
+            font=("Segoe UI", 12, "italic"),
+            text_color="gray"
+        )
+        self.loading_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Adiciona botão de deletar ao frame do filtro
         self.btn_delete = ctk.CTkButton(
@@ -84,12 +93,29 @@ class ManageGroupDialog(ctk.CTkToplevel):
         )
         self.btn_new.grid(row=0, column=0, padx=5, sticky="ew")
 
-        # --- Inicialização ---
-        self._load_all_groups()
-        self._clear_form()
-
+        # --- Inicialização Otimizada ---
+        self._clear_form()  # Limpa form primeiro (instantâneo)
+        
         self.transient(parent)
-        self.grab_set()
+        self.update_idletasks()  # Força renderização da janela
+        
+        # Carrega dados em background
+        self.after(50, self._load_initial_data)
+        
+    def _load_initial_data(self):
+        """Carrega dados iniciais em background após a janela ser exibida."""
+        try:
+            self._load_all_groups()
+            
+            # Remove label de loading
+            if hasattr(self, 'loading_label') and self.loading_label:
+                self.loading_label.destroy()
+                
+        except Exception as e:
+            logging.error(f"Erro ao carregar dados iniciais: {e}")
+            messagebox.showerror("Erro", f"Erro ao carregar dados: {e}")
+        finally:
+            self.grab_set()  # Apenas agora torna modal
 
     def _load_all_groups(self, preserve_state=False):
         """

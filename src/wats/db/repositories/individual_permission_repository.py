@@ -39,7 +39,7 @@ class IndividualPermissionRepository(BaseRepository):
             start_date = datetime.now()
 
         # Verificar se já existe uma permissão ativa para este usuário/conexão
-        existing_query = """
+        existing_query = f"""
             SELECT Id FROM Permissao_Conexao_Individual_WTS
             WHERE Usu_Id = {self.db.PARAM} AND Con_Codigo = {self.db.PARAM} AND Ativo = {self.db.PARAM}
         """
@@ -57,7 +57,7 @@ class IndividualPermissionRepository(BaseRepository):
                     return False, "Usuário já possui acesso individual ativo para esta conexão."
 
                 # Inserir nova permissão
-                insert_query = """
+                insert_query = f"""
                     INSERT INTO Permissao_Conexao_Individual_WTS
                     (Usu_Id, Con_Codigo, Data_Inicio, Data_Fim, Criado_Por_Usu_Id, Data_Criacao, Ativo, Observacoes)
                     VALUES ({self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM})
@@ -294,7 +294,7 @@ class IndividualPermissionRepository(BaseRepository):
 
         # Verificar se já existe uma permissão ativa (permanente ou temporária)
         # para este usuário/conexão
-        existing_query = """
+        existing_query = f"""
             SELECT Id, Data_Fim FROM Permissao_Conexao_Individual_WTS
             WHERE Usu_Id = {self.db.PARAM} AND Con_Codigo = {self.db.PARAM} AND Ativo = {self.db.PARAM}
             AND (Data_Fim IS NULL OR Data_Fim >= {self.db.PARAM})
@@ -320,7 +320,7 @@ class IndividualPermissionRepository(BaseRepository):
                         )
 
                 # Inserir nova permissão temporária
-                insert_query = """
+                insert_query = f"""
                     INSERT INTO Permissao_Conexao_Individual_WTS
                     (Usu_Id, Con_Codigo, Data_Inicio, Data_Fim, Criado_Por_Usu_Id, Data_Criacao, Ativo, Observacoes)
                     VALUES ({self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM})

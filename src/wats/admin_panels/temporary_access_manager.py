@@ -407,7 +407,16 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
                 if perm.get("Data_Fim"):
                     expira_em = perm["Data_Fim"].strftime("%d/%m/%Y %H:%M")
 
-                # Inserir na tree com ID da permissão como tag
+                # Determinar tag de status baseado no tempo restante
+                tempo_restante = perm.get("Tempo_Restante", "")
+                status_tag = "normal"
+                if "Expirado" in tempo_restante:
+                    status_tag = "expired"
+                elif tempo_restante.startswith("0h") and "min" in tempo_restante:
+                    status_tag = "warning"
+
+                # Inserir na tree com ID da permissão E tag de status
+                perm_id = str(perm.get("Id", ""))
                 item_id = self.tree_active.insert(
                     "",
                     "end",
@@ -419,19 +428,8 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
                         perm.get("Tempo_Restante", "N/A"),
                         perm.get("Criado_Por", "N/A"),
                     ),
-                    tags=[str(perm.get("Id", ""))],
+                    tags=[perm_id, status_tag],  # Mantém ambas as tags: ID e status
                 )
-
-                # Colorir baseado no tempo restante
-                tempo_restante = perm.get("Tempo_Restante", "")
-                if "Expirado" in tempo_restante:
-                    self.tree_active.set(item_id, "tempo_restante", "⚠️ Expirado")
-                    self.tree_active.item(item_id, tags=["expired"])
-                elif tempo_restante.startswith("0h") and "min" in tempo_restante:
-                    # Menos de 1 hora
-                    self.tree_active.item(item_id, tags=["warning"])
-                else:
-                    self.tree_active.item(item_id, tags=["normal"])
 
             # Configurar cores das tags
             self.tree_active.tag_configure("expired", background="#ffebee", foreground="red")
@@ -599,26 +597,29 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
                 messagebox.showwarning("Aviso", "Selecione uma permissão na lista para revogar!")
                 return
 
-            # Obter ID da permissão
+            # Obter ID da permissão (primeira tag)
             item = self.tree_active.item(selection[0])
-            tags = self.tree_active.item(selection[0], "tags")
+            tags = item.get("tags", [])
 
-            if not tags or not tags[0]:
+            if not tags or len(tags) == 0:
                 messagebox.showerror(
                     "Erro", "Não foi possível identificar a permissão selecionada!"
                 )
                 return
 
+            # A primeira tag é sempre o ID da permissão, a segunda é o status
             try:
                 permission_id = int(tags[0])
-            except ValueError:
-                messagebox.showerror("Erro", "ID da permissão inválido!")
+            except (ValueError, IndexError):
+                messagebox.showerror("Erro", f"ID da permissão inválido! Tags: {tags}")
+                logging.error(f"Tags inválidas ao revogar: {tags}")
                 return
 
             # Obter dados para confirmação
-            usuario = item["values"][0]
-            conexao = item["values"][1]
-            expira = item["values"][3]
+            values = item.get("values", [])
+            usuario = values[0] if len(values) > 0 else "N/A"
+            conexao = values[1] if len(values) > 1 else "N/A"
+            expira = values[3] if len(values) > 3 else "N/A"
 
             # Confirmar revogação
             if messagebox.askyesno(
