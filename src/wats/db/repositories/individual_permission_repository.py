@@ -347,6 +347,7 @@ class IndividualPermissionRepository(BaseRepository):
                 )
                 cursor.execute(insert_query, params)
 
+                invalidate_user_caches()
                 return (
                     True,
                     f"Acesso temporário concedido até {end_date.strftime('%d/%m/%Y %H:%M')}.",
@@ -444,6 +445,9 @@ class IndividualPermissionRepository(BaseRepository):
                 cursor.execute(query, (False, True, datetime.now()))
                 rows_affected = cursor.rowcount
 
+                if rows_affected > 0:
+                    invalidate_user_caches()
+                
                 return rows_affected, f"{rows_affected} permissões expiradas foram desativadas."
 
         except self.driver_module.Error as e:
@@ -466,6 +470,7 @@ class IndividualPermissionRepository(BaseRepository):
                 cursor.execute(query, (False, permission_id, True))
 
                 if cursor.rowcount > 0:
+                    invalidate_user_caches()
                     return True, "Acesso temporário revogado com sucesso."
                 else:
                     return False, "Permissão temporária não encontrada ou já inativa."

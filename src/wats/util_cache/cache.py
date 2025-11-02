@@ -132,9 +132,6 @@ class InMemoryCache:
             
             for key in expired_keys:
                 del self._cache[key]
-            
-            if expired_keys:
-                logging.debug(f"Cache cleanup: removed {len(expired_keys)} expired entries")
     
     def _start_cleanup_thread(self):
         """Inicia thread de limpeza automática."""
@@ -202,11 +199,9 @@ def cached(ttl: Optional[int] = None, key_prefix: str = "", namespace: str = "")
             cached_value = cache.get(cache_key)
             
             if cached_value is not None:
-                logging.debug(f"Cache HIT: {cache_key}")
                 return cached_value
             
             # Cache miss - executa função
-            logging.debug(f"Cache MISS: {cache_key}")
             result = func(*args, **kwargs)
             
             # Armazena no cache
@@ -255,8 +250,6 @@ def invalidate_cache_pattern(pattern: str):
         
         for key in keys_to_delete:
             cache.delete(key)
-        
-        logging.info(f"Invalidated {len(keys_to_delete)} cache entries matching '{pattern}'")
 
 
 def _matches_pattern(key: str, pattern: str) -> bool:
@@ -305,13 +298,9 @@ def invalidate_cache(namespace: str = "", pattern: str = "*"):
         
         for key in keys_to_delete:
             cache.delete(key)
-        
-        if keys_to_delete:
-            logging.debug(f"Cache invalidation: removed {len(keys_to_delete)} entries (namespace='{namespace}')")
 
 
 def clear_all_cache():
     """Limpa completamente o cache."""
     cache = get_cache()
     cache.clear()
-    logging.info("All cache cleared")

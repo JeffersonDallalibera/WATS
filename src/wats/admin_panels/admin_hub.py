@@ -90,7 +90,11 @@ class AdminHubDialog(ctk.CTkToplevel):
     def _open_user_manager(self):
         """Abre o diálogo de gerenciamento de usuários."""
         logging.info("Abrindo gerenciador de usuários...")
-        dialog = ManageUserDialog(self, self.db)
+        # Passa callback para atualizar conexões quando permissões mudarem
+        def on_permission_changed():
+            if hasattr(self.parent_app, '_populate_tree'):
+                self.parent_app._populate_tree()
+        dialog = ManageUserDialog(self, self.db, on_permission_changed=on_permission_changed)
         self.wait_window(dialog)
         self._on_admin_dialog_close()
 
@@ -111,7 +115,11 @@ class AdminHubDialog(ctk.CTkToplevel):
     def _open_temporary_access_manager(self):
         """Abre o diálogo de gerenciamento de permissões temporárias."""
         logging.info("Abrindo gerenciador de permissões temporárias...")
-        dialog = TemporaryAccessDialog(self, self.db)
+        # Passa callback para atualizar conexões quando permissões mudarem
+        def on_permission_changed():
+            if hasattr(self.parent_app, '_populate_tree'):
+                self.parent_app._populate_tree()
+        dialog = TemporaryAccessDialog(self, self.db, on_permission_changed=on_permission_changed)
         self.wait_window(dialog)
         self._on_admin_dialog_close()
 

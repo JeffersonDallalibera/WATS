@@ -16,9 +16,11 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
     Interface focada em conceder acessos com data de expiração.
     """
 
-    def __init__(self, parent, db: DBService):
+    def __init__(self, parent, db: DBService, on_permission_changed=None):
         super().__init__(parent)
         self.db = db
+        self.parent_window = parent
+        self.on_permission_changed = on_permission_changed  # Callback para notificar mudanças
         self.individual_perm_repo = IndividualPermissionRepository(db.db_manager)
 
         self.title("🕐 Gerenciar Permissões Temporárias")
@@ -581,6 +583,9 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
                     messagebox.showinfo("Sucesso", message)
                     self._refresh_active_permissions()
                     self.entry_observations.delete(0, "end")  # Limpar campo
+                    # Notifica a janela principal para atualizar as conexões
+                    if self.on_permission_changed:
+                        self.on_permission_changed()
                 else:
                     messagebox.showerror("Erro", message)
 
@@ -635,6 +640,9 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
                 if success:
                     messagebox.showinfo("Sucesso", message)
                     self._refresh_active_permissions()
+                    # Notifica a janela principal para atualizar as conexões
+                    if self.on_permission_changed:
+                        self.on_permission_changed()
                 else:
                     messagebox.showerror("Erro", message)
 
@@ -654,6 +662,9 @@ class TemporaryAccessDialog(ctk.CTkToplevel):
 
                 messagebox.showinfo("Limpeza Concluída", message)
                 self._refresh_active_permissions()
+                # Notifica a janela principal para atualizar as conexões
+                if count > 0 and self.on_permission_changed:
+                    self.on_permission_changed()
 
         except Exception as e:
             logging.error(f"Erro ao limpar permissões expiradas: {e}")

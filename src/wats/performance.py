@@ -126,17 +126,19 @@ def invalidate_connection_caches():
 
 
 def invalidate_user_caches():
-    """Invalida todos os caches relacionados a usuários."""
+    """Invalida todos os caches relacionados a usuários e conexões (que dependem de permissões)."""
     invalidate_cache_pattern("users:*")
     invalidate_cache_pattern("permissions:*")
-    logging.debug("User and permission caches invalidated")
+    invalidate_cache_pattern("connections:*")  # Conexões dependem de permissões
+    logging.debug("User, permission and connection caches invalidated")
 
 
 def invalidate_group_caches():
-    """Invalida todos os caches relacionados a grupos."""
+    """Invalida todos os caches relacionados a grupos, permissões e conexões."""
     invalidate_cache_pattern("groups:*")
     invalidate_cache_pattern("permissions:*")
-    logging.debug("Group and permission caches invalidated")
+    invalidate_cache_pattern("connections:*")  # Conexões dependem de grupos
+    logging.debug("Group, permission and connection caches invalidated")
 
 
 # Exemplo de uso em repositories:

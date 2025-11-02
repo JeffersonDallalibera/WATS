@@ -58,7 +58,6 @@ try:
     from .session_protection import CreateSessionProtectionDialog, ValidateSessionPasswordDialog
 
     # Não importamos session_protection_manager aqui - sempre buscaremos a instância atual
-    logging.info("[IMPORT_DEBUG] session_protection classes import bem-sucedido")
     session_protection_manager = None  # Será sempre buscado dinamicamente
 except ImportError as e:
     # Fallback se não encontrar o módulo
@@ -215,9 +214,7 @@ class Application(ctk.CTk):
     # --- [NOVOS MÉTODOS] Para salvar e carregar o tema ---
     def _load_theme_preference(self) -> Optional[str]:
         """Lê o arquivo JSON e retorna o tema salvo."""
-        logging.info(f"Procurando tema em: {self.settings_file}")
         if not os.path.exists(self.settings_file):
-            logging.warning("Arquivo de settings não encontrado.")
             return None
         try:
             # --- [NOVO] Verifica se o arquivo está vazio ---
@@ -234,7 +231,6 @@ class Application(ctk.CTk):
             with open(self.settings_file, "r", encoding="utf-8") as f:  # Adiciona encoding
                 data = json.load(f)
                 theme = data.get("theme")
-                logging.info(f"Tema encontrado no arquivo: {theme}")
                 return theme
         except (json.JSONDecodeError, IOError) as e:
             # O log "Expecting value..." entra aqui
@@ -243,14 +239,12 @@ class Application(ctk.CTk):
 
     def _save_theme_preference(self, theme_mode: str):
         """Salva o tema escolhido no arquivo JSON."""
-        logging.info(f"Tentando salvar tema '{theme_mode}' em: {self.settings_file}")
         try:
             os.makedirs(
                 os.path.dirname(self.settings_file), exist_ok=True
             )  # Cria diretórios, se não existirem
             with open(self.settings_file, "w", encoding="utf-8") as f:  # Adiciona encoding
                 json.dump({"theme": theme_mode}, f, indent=4)
-            logging.info(f"Tema salvo com sucesso: {theme_mode}")
         except IOError as e:
             logging.error(f"Não foi possível SALVAR o arquivo de settings: {e}")
             # --- [NOVO] Mostra erro para o usuário ---
@@ -266,10 +260,8 @@ class Application(ctk.CTk):
         theme = self._load_theme_preference()
         if theme in ["Light", "Dark"]:
             ctk.set_appearance_mode(theme)
-            logging.info(f"Tema salvo '{theme}' aplicado.")
         else:
             ctk.set_appearance_mode("System")
-            logging.info("Nenhum tema salvo ou tema inválido. Usando 'System'.")
 
     # --- Fim dos novos métodos ---
 
@@ -335,81 +327,36 @@ class Application(ctk.CTk):
         initial data load (also in background). Any UI-side error display is
         marshalled to the main thread via `after`.
         """
-        logging.info("Background DB initialization starting...")
-        logging.info("[CONFIG_DEBUG] Função _init_db_and_start iniciada")
+        logging.info("Inicializando banco de dados...")
 
         # Resolve IP address in background to avoid blocking startup
         try:
             self.user_ip = socket.gethostbyname(socket.gethostname())
-            logging.debug(f"User IP resolved to: {self.user_ip}")
         except socket.gaierror as e:
             logging.warning(f"Could not resolve hostname: {e}, using localhost")
             self.user_ip = "127.0.0.1"
 
         try:
             self.db = DBService(self.settings)
-            logging.info("DBService initialized successfully in background.")
-            logging.info(f"[CONFIG_DEBUG] self.db criado: {self.db is not None}")
-            logging.info(f"[CONFIG_DEBUG] type(self.db): {type(self.db).__name__}")
 
             # Configura o sistema de proteção de sessão com acesso ao DB
             try:
-                logging.info("[CONFIG_DEBUG] Iniciando configuração do sistema de proteção...")
-
                 # Tenta fazer import direto primeiro
                 try:
                     from src.wats.session_protection import configure_session_protection_with_db
-
-                    logging.info("[CONFIG_DEBUG] Import direto realizado com sucesso")
                 except ImportError:
-                    logging.info("[CONFIG_DEBUG] Import direto falhou, tentando import relativo...")
                     from .session_protection import configure_session_protection_with_db
 
-                    logging.info("[CONFIG_DEBUG] Import relativo realizado com sucesso")
-
-                logging.info("[CONFIG_DEBUG] Chamando configure_session_protection_with_db...")
                 configure_session_protection_with_db(self.db)
-                logging.info("Sistema de proteção de sessão configurado com validação no servidor")
-                logging.info(
-                    "[CONFIG_DEBUG] Configuração do sistema de proteção concluída com sucesso"
-                )
-
-                # Verifica se a configuração foi aplicada corretamente
-                try:
-                    from src.wats.session_protection import session_protection_manager
-
-                    logging.info(
-                        f"[CONFIG_DEBUG] session_protection_manager existe: {session_protection_manager is not None}"
-                    )
-                    if session_protection_manager:
-                        logging.info(
-                            f"[CONFIG_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}"
-                        )
-                        logging.info(
-                            f"[CONFIG_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}"
-                        )
-                except ImportError:
-                    from .session_protection import session_protection_manager
-
-                    logging.info(
-                        f"[CONFIG_DEBUG] session_protection_manager existe: {session_protection_manager is not None}"
-                    )
-                    if session_protection_manager:
-                        logging.info(
-                            f"[CONFIG_DEBUG] session_protection_manager.db_service: {session_protection_manager.db_service is not None}"
-                        )
-                        logging.info(
-                            f"[CONFIG_DEBUG] session_protection_manager.session_repo: {session_protection_manager.session_repo is not None}"
-                        )
+                logging.info("Sistema de proteção de sessão configurado")
 
             except Exception as e:
                 logging.warning(f"Falha ao configurar proteção de sessão: {e}")
-                logging.error(f"[CONFIG_DEBUG] Erro detalhado na configuração: {e}", exc_info=True)
 
             # Initialize recording manager
             self.recording_manager = RecordingManager(self.settings)
             if self.recording_manager.initialize():
-                logging.info("Recording manager initialized successfully.")
+                logging.info("Recording manager inicializado")
                 # Set up recording callbacks
                 self.recording_manager.set_callbacks(
                     on_started=self._on_recording_started,
@@ -706,12 +653,10 @@ class Application(ctk.CTk):
         # [ALTERADO] Filtro agora opera sobre o data_cache e reconstrói a view (mais simples)
         # A atualização diferencial só ocorre no refresh automático/manual
         filter_text = self.filter_var.get().lower()
-        logging.debug(f"Filtrando com texto: '{filter_text}'")
         self._rebuild_tree_from_cache(filter_text)
 
     def _rebuild_tree_from_cache(self, filter_text: str = ""):
         """Limpa e reconstrói a Treeview usando self.data_cache, aplicando filtro."""
-        logging.debug(f"Reconstruindo Treeview do cache com filtro: '{filter_text}'")
         # Limpa completamente a Treeview e os mapas
         for iid in self.tree.get_children():
             self.tree.delete(iid)
@@ -758,13 +703,10 @@ class Application(ctk.CTk):
             )
             self.tree_item_map[conn_data.con_codigo] = item_iid  # Atualiza o mapa
 
-        logging.debug(f"Reconstrução concluída. {len(self.tree_item_map)} itens na Treeview.")
-
     def _populate_tree(self):
         """Busca novos dados e aplica atualizações diferenciais na Treeview."""
         if self._refresh_job:
             self.after_cancel(self._refresh_job)  # Cancela job anterior
-        logging.info("Iniciando atualização diferencial da Treeview...")
 
         # 0. Limpa proteções órfãs periodicamente (a cada refresh) - ASYNC
         self._cleanup_orphaned_protections()
@@ -829,15 +771,10 @@ class Application(ctk.CTk):
             ids_to_delete = current_ids - new_ids
             ids_to_check_update = current_ids.intersection(new_ids)
 
-            logging.debug(
-                f"Atualização: Add={len(ids_to_add)}, Del={len(ids_to_delete)}, Check={len(ids_to_check_update)}"
-            )
-
             # --- 4. Processa Deleções ---
             for con_codigo in ids_to_delete:
                 item_iid = self.tree_item_map.pop(con_codigo, None)  # Remove do mapa
                 if item_iid and self.tree.exists(item_iid):
-                    logging.debug(f"Deletando item: ID={con_codigo}, iid={item_iid}")
                     self.tree.delete(item_iid)
 
             # --- 5. Processa Adições e Atualizações ---
@@ -904,7 +841,6 @@ class Application(ctk.CTk):
 
                 # Compara (usando o __eq__ que definimos)
                 if current_conn_data != new_conn_data:
-                    logging.debug(f"Atualizando item: ID={con_codigo}, iid={item_iid}")
                     # Atualiza os campos na Treeview
                     self.tree.item(
                         item_iid,
@@ -920,9 +856,6 @@ class Application(ctk.CTk):
                         else ""
                     )
                     if current_parent_iid != new_parent_iid:
-                        logging.debug(
-                            f"Movendo item ID={con_codigo} para grupo '{new_conn_data.group_name}' (iid={new_parent_iid})"
-                        )
                         # Cria novo grupo se necessário
                         if (
                             new_conn_data.group_name
@@ -951,7 +884,6 @@ class Application(ctk.CTk):
                         self.group_item_map[conn_data.group_name] = group_iid
                     parent_iid = self.group_item_map.get(conn_data.group_name, "")
 
-                logging.debug(f"Inserindo item: ID={con_codigo}, Nome={conn_data.nome}")
                 item_iid = self.tree.insert(
                     parent_iid,
                     "end",
@@ -986,7 +918,6 @@ class Application(ctk.CTk):
                 group_name = next(
                     (name for name, iid in self.group_item_map.items() if iid == group_iid), None
                 )
-                logging.debug(f"Deletando grupo vazio: iid={group_iid}, Nome={group_name}")
                 if self.tree.exists(group_iid):
                     self.tree.delete(group_iid)
                 if group_name in self.group_item_map:
@@ -994,7 +925,6 @@ class Application(ctk.CTk):
 
             # --- 7. Finalização ---
             self.data_cache = new_data_list  # Atualiza o cache principal
-            logging.info("Atualização diferencial concluída.")
 
         except Exception as e:
             logging.error(f"Erro inesperado durante atualização diferencial: {e}", exc_info=True)
@@ -1012,7 +942,6 @@ class Application(ctk.CTk):
     # --- [NOVO] Métodos de carregamento inicial movidos para background ---
     def _initial_load_in_background(self):
         """Busca os dados iniciais e agenda a construção da Treeview."""
-        logging.info("Carregamento inicial em background iniciado...")
         try:
             # 1. Limpa conexões fantasmas primeiro
             self.db.logs.cleanup_ghost_connections()
@@ -1041,13 +970,11 @@ class Application(ctk.CTk):
 
     def _build_initial_tree(self, initial_data: List[ConnectionData]):
         """Constrói a Treeview pela primeira vez com os dados carregados."""
-        logging.info("Construindo Treeview inicial...")
         self.data_cache = initial_data
         self._rebuild_tree_from_cache()  # Usa a função de reconstrução (sem filtro)
         self._show_loading_message(False)  # Esconde "Carregando..."
         # Inicia o ciclo de refresh automático APÓS a carga inicial
         self._refresh_job = self.after(60000, self._populate_tree)
-        logging.info("Construção inicial concluída.")
 
     # --- FIM Background Load ---
 

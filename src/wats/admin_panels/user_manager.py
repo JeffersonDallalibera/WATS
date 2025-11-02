@@ -15,9 +15,11 @@ class ManageUserDialog(ctk.CTkToplevel):
     Janela para Criar, Editar e Gerenciar permissões de Usuários, usando Treeview.
     """
 
-    def __init__(self, parent, db: DBService):
+    def __init__(self, parent, db: DBService, on_permission_changed=None):
         super().__init__(parent)
         self.db = db
+        self.parent_window = parent
+        self.on_permission_changed = on_permission_changed  # Callback para notificar mudanças
         self.all_users: List[Tuple] = []
         self.all_groups: List[Tuple] = []
         self.selected_user_id: Optional[int] = None
@@ -470,6 +472,9 @@ class ManageUserDialog(ctk.CTkToplevel):
                     self._clear_form()
                     # Limpar cache de usuários individuais para forçar recarga
                     self._all_users_individual = []
+                    # Notifica a janela principal para atualizar as conexões
+                    if self.on_permission_changed:
+                        self.on_permission_changed()
                 else:
                     messagebox.showerror("Erro ao Criar", message)
             except Exception as e:
@@ -487,6 +492,9 @@ class ManageUserDialog(ctk.CTkToplevel):
                     self._load_all_users(preserve_state=True)
                     # Limpar cache de usuários individuais para forçar recarga
                     self._all_users_individual = []
+                    # Notifica a janela principal para atualizar as conexões
+                    if self.on_permission_changed:
+                        self.on_permission_changed()
                     # Mantém dados no form
                 else:
                     messagebox.showerror("Erro ao Atualizar", message)
@@ -786,6 +794,9 @@ class ManageUserDialog(ctk.CTkToplevel):
             if success:
                 messagebox.showinfo("Sucesso", message)
                 self._load_active_individual_permissions()
+                # Notifica a janela principal para atualizar as conexões
+                if self.on_permission_changed:
+                    self.on_permission_changed()
             else:
                 messagebox.showerror("Erro", message)
 
@@ -816,6 +827,9 @@ class ManageUserDialog(ctk.CTkToplevel):
             if success:
                 messagebox.showinfo("Sucesso", message)
                 self._load_active_individual_permissions()
+                # Notifica a janela principal para atualizar as conexões
+                if self.on_permission_changed:
+                    self.on_permission_changed()
             else:
                 messagebox.showerror("Erro", message)
 

@@ -348,23 +348,14 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     ):
         super().__init__(parent)
 
-        logging.info(
-            f"[SESSION_VALIDATION] Inicializando diálogo de validação para usuário: {requesting_user}"
-        )
-        logging.info(f"[SESSION_VALIDATION] Protegido por: {protected_by}")
-        logging.info(f"[SESSION_VALIDATION] Modo liberação: {unlock_mode}")
-
         self.connection_data = connection_data
         self.requesting_user = requesting_user
         self.protected_by = protected_by
         self.unlock_mode = unlock_mode
         self.result = None
 
-        logging.info("[SESSION_VALIDATION] Chamando _setup_ui()...")
         self._setup_ui()
-        logging.info("[SESSION_VALIDATION] Chamando _center_window()...")
         self._center_window()
-        logging.info("[SESSION_VALIDATION] Inicialização concluída")
 
         # Configurações da janela baseadas no modo
         if self.unlock_mode:
@@ -383,10 +374,6 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     def _setup_ui(self):
         """Configura a interface do diálogo."""
 
-        logging.info(
-            "[SESSION_VALIDATION] Iniciando _setup_ui() da ValidateSessionPasswordDialog..."
-        )
-
         # Define textos baseados no modo
         if self.unlock_mode:
             self.title_text = "🔓 Liberar Conexão"
@@ -401,7 +388,6 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         main_frame.grid_columnconfigure(0, weight=1)
-        logging.info("[SESSION_VALIDATION] Frame principal criado")
 
         # Título
         title_label = ctk.CTkLabel(main_frame, text=self.title_text, font=("Segoe UI", 18, "bold"))
@@ -485,7 +471,6 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
             hover_color="gray40",
         )
         cancel_button.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
-        logging.info("[SESSION_VALIDATION] Botão Cancelar criado e posicionado")
 
         validate_button = ctk.CTkButton(
             button_frame,
@@ -494,8 +479,6 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
             font=("Segoe UI", 12, "bold"),
         )
         validate_button.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="ew")
-        logging.info("[SESSION_VALIDATION] Botão Validar Senha criado e posicionado")
-        logging.info("[SESSION_VALIDATION] _setup_ui() da ValidateSessionPasswordDialog concluída")
 
     def _center_window(self):
         """Centraliza a janela na tela."""
@@ -509,11 +492,8 @@ class ValidateSessionPasswordDialog(ctk.CTkToplevel):
     def _validate_password(self):
         """Valida a senha de proteção."""
 
-        logging.info("[SESSION_VALIDATION] _validate_password() chamado")
-
         password = self.password_entry.get().strip()
         if not password:
-            logging.warning("[SESSION_VALIDATION] Senha vazia fornecida")
             messagebox.showwarning("Senha Necessária", "Por favor, digite a senha de proteção")
             self.password_entry.focus()
             return
