@@ -2118,13 +2118,31 @@ class Application(ctk.CTk):
         try:
             connected_user = request_data.get("connected_user")
             if connected_user:
+                logging.info(f"Tentando desconectar usuário '{connected_user}' da conexão {connection_id}")
+                
                 # Força desconexão do outro usuário
                 if self.db.logs.delete_connection_log(connection_id, connected_user):
                     logging.info(f"Usuário {connected_user} desconectado para acesso exclusivo")
+                    
+                    # CORREÇÃO: Para heartbeats órfãos quando há múltiplos usuários
+                    # Se não há mais usuários conectados nesta conexão, limpar o heartbeat
+                    try:
+                        # Verificar se ainda há outros usuários conectados
+                        remaining_users = self._get_connected_users_for_connection(connection_id)
+                        if not remaining_users:
+                            # Nenhum usuário restante, parar heartbeat
+                            if connection_id in self.active_heartbeats:
+                                logging.info(f"Parando heartbeat órfão da conexão {connection_id}")
+                                self.active_heartbeats[connection_id].set()
+                                del self.active_heartbeats[connection_id]
+                    except Exception as e:
+                        logging.error(f"Erro ao limpar heartbeat órfão: {e}")
+                    
                     messagebox.showinfo(
                         "Acesso Exclusivo",
                         f"Usuário '{connected_user}' foi desconectado para permitir seu acesso exclusivo.",
                     )
+                    
                     # Ao desconectar um usuário, tenta liberar quaisquer proteções que ele
                     # tenha criado
                     try:
@@ -2147,9 +2165,33 @@ class Application(ctk.CTk):
 
                     # Atualiza a visualização
                     self._populate_tree()
+                    
+                else:
+                    logging.error(f"Falha ao desconectar usuário {connected_user} da conexão {connection_id}")
+                    messagebox.showerror("Erro", f"Não foi possível desconectar o usuário '{connected_user}'")
 
         except Exception as e:
             logging.error(f"Erro ao desconectar outro usuário: {e}")
+
+    def _get_connected_users_for_connection(self, con_codigo: int) -> List[str]:
+        """
+        Obtém lista de usuários ainda conectados em uma conexão específica.
+        
+        Args:
+            con_codigo: Código da conexão
+            
+        Returns:
+            Lista de nomes de usuários conectados
+        """
+        try:
+            query = "SELECT Usu_Nome FROM Usuario_Conexao_WTS WHERE Con_Codigo = ?"
+            with self.db.get_cursor() as cursor:
+                cursor.execute(query, (con_codigo,))
+                rows = cursor.fetchall()
+                return [row[0] for row in rows] if rows else []
+        except Exception as e:
+            logging.error(f"Erro ao buscar usuários conectados na conexão {con_codigo}: {e}")
+            return []
 
     def _show_active_collaborative_sessions(self):
         """Mostra proteções de sessão ativas (para administradores)."""

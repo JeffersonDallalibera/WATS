@@ -35,19 +35,69 @@ class LogRepository(BaseRepository):
         return False
 
     def delete_connection_log(self, con_codigo: int, username: str) -> bool:
-        """Deleta log de conexão e invalida cache."""
+        """
+        Deleta log de conexão específico e invalida cache.
+        
+        CORREÇÃO: Remove o usuário específico ao invés de apenas o primeiro.
+        
+        Args:
+            con_codigo: Código da conexão
+            username: Nome específico do usuário a ser removido
+            
+        Returns:
+            True se removeu com sucesso, False caso contrário
+        """
         query = f"DELETE FROM Usuario_Conexao_WTS WHERE Con_Codigo = {self.db.PARAM} AND Usu_Nome = {self.db.PARAM}"
         try:
             with self.db.get_cursor() as cursor:
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
-                user_to_delete = username.split("|")[0]
-                cursor.execute(query, (con_codigo, user_to_delete))
-                self._invalidate_log_caches()
-                return True
+                
+                # CORREÇÃO: Remove o usuário específico (não faz split do primeiro)
+                logging.info(f"Removendo usuário específico '{username}' da conexão {con_codigo}")
+                cursor.execute(query, (con_codigo, username))
+                
+                rows_affected = cursor.rowcount
+                if rows_affected > 0:
+                    logging.info(f"Usuário '{username}' removido com sucesso da conexão {con_codigo}")
+                    self._invalidate_log_caches()
+                    return True
+                else:
+                    logging.warning(f"Usuário '{username}' não encontrado na conexão {con_codigo}")
+                    return False
+                    
         except self.driver_module.Error as e:
-            logging.error(f"Erro ao deletar log de conexão: {e}")
+            logging.error(f"Erro ao deletar log de conexão {con_codigo} usuário '{username}': {e}")
         return False
+
+    def delete_all_users_from_connection(self, con_codigo: int) -> int:
+        """
+        Remove TODOS os usuários de uma conexão específica.
+        Útil para 'limpar' completamente uma conexão com múltiplos usuários.
+        
+        Args:
+            con_codigo: Código da conexão
+            
+        Returns:
+            Número de usuários removidos
+        """
+        query = f"DELETE FROM Usuario_Conexao_WTS WHERE Con_Codigo = {self.db.PARAM}"
+        try:
+            with self.db.get_cursor() as cursor:
+                if not cursor:
+                    raise DatabaseConnectionError("Falha ao obter cursor.")
+                
+                logging.info(f"Removendo TODOS os usuários da conexão {con_codigo}")
+                cursor.execute(query, (con_codigo,))
+                
+                rows_affected = cursor.rowcount
+                logging.info(f"Removidos {rows_affected} usuário(s) da conexão {con_codigo}")
+                self._invalidate_log_caches()
+                return rows_affected
+                    
+        except self.driver_module.Error as e:
+            logging.error(f"Erro ao limpar conexão {con_codigo}: {e}")
+        return 0
 
     def update_heartbeat(self, con_codigo: int, username: str) -> bool:
         # Dialeto: GETDATE() -> self.db.NOW
