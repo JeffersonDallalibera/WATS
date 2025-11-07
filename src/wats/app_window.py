@@ -27,6 +27,7 @@ from .db.db_service import DBService
 from .db.exceptions import DatabaseError
 from .dialogs import ClientSelectorDialog
 from .utils import hash_password_md5, parse_particularities
+from .utils.process_monitor import is_rdp_connection_active, get_rdp_monitor
 from .util_cache.thread_pool import get_thread_pool, shutdown_thread_pool
 
 # Importação condicional do RecordingManager em modo demo
@@ -1117,6 +1118,43 @@ class Application(ctk.CTk):
 
         self.after(0, update_task)
 
+    def _cleanup_ui_after_disconnect(self, con_codigo: int, username: str):
+        """
+        Limpa a UI após detecção de desconexão automática do processo RDP.
+        
+        Args:
+            con_codigo: Código da conexão
+            username: Nome do usuário desconectado
+        """
+        try:
+            # Procura o item na árvore
+            item_id = self.tree_item_map.get(con_codigo)
+            
+            if item_id and self.tree.exists(item_id):
+                current_values = self.tree.item(item_id, "values")
+                if len(current_values) > 7:
+                    current_users = current_values[7]
+                    
+                    if current_users:
+                        # Remove o usuário específico da string
+                        users_list = [u for u in current_users.split("|") if u != username]
+                        new_users = "|".join(users_list)
+                        
+                        # Atualiza a célula
+                        self._update_username_cell(item_id, new_users)
+                        
+                        logging.info(f"[UI_CLEANUP] Usuário {username} removido da UI para conexão {con_codigo}")
+            
+            # Se não conseguiu encontrar/atualizar especificamente, força refresh completo
+            else:
+                logging.warning(f"[UI_CLEANUP] Item {con_codigo} não encontrado, forçando refresh")
+                self._populate_tree()
+                
+        except Exception as e:
+            logging.error(f"[UI_CLEANUP] Erro ao limpar UI após desconexão: {e}")
+            # Em caso de erro, força refresh completo
+            self._populate_tree()
+
     def _execute_connection(self, data: Dict[str, Any], connection_func, *args):
         """
         Lida com a lógica de log, heartbeat e atualização da UI
@@ -1153,11 +1191,79 @@ class Application(ctk.CTk):
         self.active_heartbeats[con_codigo] = stop_event
 
         def heartbeat_task(con_id, user, stop_flag: Event):
-            """Thread que envia heartbeats a cada 60 segundos."""
+            """Thread que envia heartbeats a cada 60 segundos com validação de processo RDP."""
+            
             logging.info(f"[HB {con_id}] Heartbeat iniciado para {user}.")
+            
+            # Obtém dados da conexão para validação do processo
+            connection_data = data  # Dados já disponíveis no escopo
+            server_ip = connection_data.get("ip", "").split(":")[0]  # Remove porta se houver
+            rdp_user = connection_data.get("user", "")
+            connection_title = connection_data.get("title", "")
+            
+            missed_heartbeats = 0
+            max_missed_heartbeats = 3  # Máximo de heartbeats perdidos antes de assumir desconexão
+            
             while not stop_flag.wait(60):
-                if not self.db.logs.update_heartbeat(con_id, user):
-                    logging.warning(f"[HB {con_id}] Falha ao enviar heartbeat.")
+                try:
+                    # 1. Verifica se o processo RDP ainda está ativo
+                    rdp_active = is_rdp_connection_active(server_ip, rdp_user, connection_title)
+                    
+                    if not rdp_active:
+                        missed_heartbeats += 1
+                        logging.warning(
+                            f"[HB {con_id}] Processo RDP não encontrado para {server_ip} "
+                            f"(tentativa {missed_heartbeats}/{max_missed_heartbeats})"
+                        )
+                        
+                        if missed_heartbeats >= max_missed_heartbeats:
+                            logging.warning(
+                                f"[HB {con_id}] Processo RDP definitivamente inativo para {server_ip}. "
+                                f"Limpando sessão automaticamente."
+                            )
+                            
+                            # Para o heartbeat e limpa a sessão
+                            stop_flag.set()
+                            
+                            # Agenda limpeza na thread principal
+                            def cleanup_disconnected_session():
+                                try:
+                                    logging.info(f"[CLEANUP] Limpando sessão desconectada {con_id} do usuário {user}")
+                                    
+                                    # Remove do banco de dados
+                                    if self.db.logs.delete_connection_log(con_id, user):
+                                        logging.info(f"[CLEANUP] Sessão {con_id} removida do banco com sucesso")
+                                        
+                                        # Atualiza a UI
+                                        self._cleanup_ui_after_disconnect(con_id, user)
+                                        
+                                        # Remove do active_heartbeats
+                                        if con_id in self.active_heartbeats:
+                                            del self.active_heartbeats[con_id]
+                                            
+                                    else:
+                                        logging.error(f"[CLEANUP] Falha ao remover sessão {con_id} do banco")
+                                        
+                                except Exception as e:
+                                    logging.error(f"[CLEANUP] Erro durante limpeza da sessão {con_id}: {e}")
+                            
+                            # Executa limpeza na thread principal da UI
+                            self.after(0, cleanup_disconnected_session)
+                            break
+                    else:
+                        # Processo RDP está ativo, reset contador
+                        if missed_heartbeats > 0:
+                            logging.info(f"[HB {con_id}] Processo RDP redetectado para {server_ip}")
+                            missed_heartbeats = 0
+                    
+                    # 2. Envia heartbeat normal apenas se processo está ativo
+                    if rdp_active:
+                        if not self.db.logs.update_heartbeat(con_id, user):
+                            logging.warning(f"[HB {con_id}] Falha ao enviar heartbeat para {server_ip}")
+                    
+                except Exception as e:
+                    logging.error(f"[HB {con_id}] Erro durante heartbeat: {e}")
+                    
             logging.info(f"[HB {con_id}] Heartbeat parado para {user}.")
 
         hb_thread = Thread(
@@ -1348,6 +1454,23 @@ class Application(ctk.CTk):
 
                 # Capture output to show a helpful error message on failure.
                 proc = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # Registra a conexão no monitor se foi bem-sucedida
+                if proc.returncode == 0:
+                    try:
+                        rdp_monitor = get_rdp_monitor()
+                        pid = rdp_monitor.register_rdp_connection(
+                            data['ip'].split(':')[0],  # Remove porta se houver
+                            data['user'],
+                            data['title']
+                        )
+                        if pid:
+                            logging.info(f"[RDP_MONITOR] Conexão RDP registrada com PID {pid}")
+                        else:
+                            logging.warning(f"[RDP_MONITOR] Não foi possível registrar conexão RDP")
+                    except Exception as e:
+                        logging.error(f"[RDP_MONITOR] Erro ao registrar conexão: {e}")
+                
                 if proc.returncode != 0:
                     # Log full output (server logs may contain useful info)
                     logging.error(
