@@ -11,15 +11,21 @@ from typing import Any, Callable, Dict, Optional
 from .file_rotation_manager import FileRotationManager
 from .smart_session_recorder import SmartSessionRecorder
 
+# ============================================================================
+# API INTEGRATION DESABILITADA (não está sendo usada no momento)
+# ============================================================================
 # Import API components if available
-try:
-    from ..api import ApiIntegrationManager
+# try:
+#     from ..api import ApiIntegrationManager
+#     API_AVAILABLE = True
+# except ImportError:
+#     logging.warning("API upload system not available")
+#     API_AVAILABLE = False
+#     ApiIntegrationManager = None
 
-    API_AVAILABLE = True
-except ImportError:
-    logging.warning("API upload system not available")
-    API_AVAILABLE = False
-    ApiIntegrationManager = None
+# Forçar API como indisponível
+API_AVAILABLE = False
+ApiIntegrationManager = None
 
 
 class RecordingManager:

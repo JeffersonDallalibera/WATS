@@ -1,12 +1,18 @@
 """
 Performance Optimizations Integration Module
-Facilita a integração de Connection Pool e Cache no WATS
+Facilita a integração de Connection Pool e Cache Inteligente no WATS
 """
 
 import logging
 from typing import Optional
 from src.wats.db.connection_pool import get_connection_pool, close_connection_pool
-from src.wats.util_cache.cache import get_cache, cached, invalidate_cache_pattern
+from src.wats.util_cache.intelligent_cache import (
+    get_cache,
+    cached,
+    invalidate_user_caches as _invalidate_user_caches,
+    invalidate_group_caches as _invalidate_group_caches,
+    invalidate_connection_caches as _invalidate_connection_caches,
+)
 from src.wats.config import Settings
 
 
@@ -121,24 +127,30 @@ def cache_config(ttl: int = 600):
 
 def invalidate_connection_caches():
     """Invalida todos os caches relacionados a conexões."""
-    invalidate_cache_pattern("connections:*")
+    _invalidate_connection_caches()
     logging.debug("Connection caches invalidated")
 
 
-def invalidate_user_caches():
-    """Invalida todos os caches relacionados a usuários e conexões (que dependem de permissões)."""
-    invalidate_cache_pattern("users:*")
-    invalidate_cache_pattern("permissions:*")
-    invalidate_cache_pattern("connections:*")  # Conexões dependem de permissões
-    logging.debug("User, permission and connection caches invalidated")
+def invalidate_user_caches(user_id: Optional[int] = None):
+    """
+    Invalida todos os caches relacionados a usuários e conexões (que dependem de permissões).
+    
+    Args:
+        user_id: ID do usuário específico (opcional). Se None, invalida todos.
+    """
+    _invalidate_user_caches(user_id)
+    logging.debug(f"User, permission and connection caches invalidated (user_id={user_id})")
 
 
-def invalidate_group_caches():
-    """Invalida todos os caches relacionados a grupos, permissões e conexões."""
-    invalidate_cache_pattern("groups:*")
-    invalidate_cache_pattern("permissions:*")
-    invalidate_cache_pattern("connections:*")  # Conexões dependem de grupos
-    logging.debug("Group, permission and connection caches invalidated")
+def invalidate_group_caches(group_id: Optional[int] = None):
+    """
+    Invalida todos os caches relacionados a grupos, permissões e conexões.
+    
+    Args:
+        group_id: ID do grupo específico (opcional). Se None, invalida todos.
+    """
+    _invalidate_group_caches(group_id)
+    logging.debug(f"Group, permission and connection caches invalidated (group_id={group_id})")
 
 
 # Exemplo de uso em repositories:

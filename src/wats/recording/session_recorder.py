@@ -35,6 +35,7 @@ class SessionRecorder:
         quality: int = 23,
         resolution_scale: float = 1.0,
         recording_mode: str = "full_screen",
+        force_window_maximized: bool = True,
     ):
         """
         Initialize the session recorder.
@@ -47,6 +48,7 @@ class SessionRecorder:
             quality: H.264 quality (0-51, lower is better quality)
             resolution_scale: Scale factor for resolution (1.0 = full, 0.5 = half)
             recording_mode: "full_screen", "rdp_window", or "active_window"
+            force_window_maximized: Force RDP window to be maximized (prevents FFmpeg errors)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +59,7 @@ class SessionRecorder:
         self.quality = quality
         self.resolution_scale = resolution_scale
         self.recording_mode = recording_mode.lower()
+        self.force_window_maximized = force_window_maximized
 
         # Validate recording mode
         valid_modes = ["full_screen", "rdp_window", "active_window"]
@@ -76,6 +79,12 @@ class SessionRecorder:
         self.session_id: Optional[str] = None
         self.target_window_handle: Optional[int] = None
         self.target_process_name: Optional[str] = None
+        
+        # Rastreamento de dimensões para detectar mudanças
+        self.last_frame_width: Optional[int] = None
+        self.last_frame_height: Optional[int] = None
+        self.dimension_change_count: int = 0
+        self.force_window_maximized: bool = True  # Força janela maximizada para evitar problemas
 
         # Screen capture setup
         self.sct = mss.mss()
@@ -109,18 +118,118 @@ class SessionRecorder:
         return monitor
 
     def _try_restore_window(self, hwnd: int) -> bool:
-        """Try to restore a minimized window."""
+        """
+        Try to restore/maximize a minimized window.
+        
+        Args:
+            hwnd: Window handle
+            
+        Returns:
+            True if window was restored successfully
+        """
         try:
             # Check if window is minimized
             if win32gui.IsIconic(hwnd):
                 logging.info("Window is minimized, attempting to restore")
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
                 time.sleep(0.5)  # Give time for window to restore
-                return True
-            return False
+            
+            # Se force_window_maximized estiver ativado, maximiza a janela
+            if self.force_window_maximized and self.recording_mode in ["rdp_window", "active_window"]:
+                logging.info(f"🔳 Maximizando janela RDP para evitar problemas de gravação (HWND: {hwnd})")
+                win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+                time.sleep(0.3)  # Tempo para maximizar
+                logging.info("✅ Janela maximizada com sucesso")
+                
+            return True
         except Exception as e:
-            logging.warning(f"Failed to restore window: {e}")
+            logging.warning(f"Failed to restore/maximize window: {e}")
             return False
+    
+    def _check_window_dimension_change(self, current_width: int, current_height: int) -> bool:
+        """
+        Verifica se as dimensões da janela mudaram significativamente.
+        
+        Args:
+            current_width: Largura atual
+            current_height: Altura atual
+            
+        Returns:
+            True se houve mudança significativa
+        """
+        if self.last_frame_width is None or self.last_frame_height is None:
+            # Primeira captura, armazena dimensões
+            self.last_frame_width = current_width
+            self.last_frame_height = current_height
+            return False
+        
+        # Calcula diferença percentual
+        width_diff = abs(current_width - self.last_frame_width)
+        height_diff = abs(current_height - self.last_frame_height)
+        
+        # Considera mudança significativa se diferença > 5%
+        width_change_pct = (width_diff / self.last_frame_width) * 100 if self.last_frame_width > 0 else 0
+        height_change_pct = (height_diff / self.last_frame_height) * 100 if self.last_frame_height > 0 else 0
+        
+        if width_change_pct > 5 or height_change_pct > 5:
+            self.dimension_change_count += 1
+            logging.warning(
+                f"⚠️ DIMENSÕES DA JANELA MUDARAM: {self.last_frame_width}x{self.last_frame_height} → "
+                f"{current_width}x{current_height} (Δ: {width_change_pct:.1f}%, {height_change_pct:.1f}%) "
+                f"[Mudanças: {self.dimension_change_count}]"
+            )
+            
+            # Atualiza dimensões armazenadas
+            self.last_frame_width = current_width
+            self.last_frame_height = current_height
+            
+            return True
+        
+        return False
+    
+    def _recreate_video_writer(self, width: int, height: int, session_id: str, connection_info: Dict[str, Any]):
+        """
+        Recria o VideoWriter com novas dimensões.
+        Necessário quando a janela é redimensionada ou movida.
+        
+        Args:
+            width: Nova largura
+            height: Nova altura
+            session_id: ID da sessão
+            connection_info: Informações da conexão
+        """
+        try:
+            logging.info(f"🔄 Recriando VideoWriter com novas dimensões: {width}x{height}")
+            
+            # Fecha writer atual
+            if self.current_writer:
+                self.current_writer.release()
+                logging.info(f"VideoWriter anterior liberado")
+            
+            # Cria novo arquivo de vídeo com timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            connection_name = connection_info.get("name", "Unknown").replace(" ", "_")
+            filename = f"{session_id}_{connection_name}_{timestamp}_resized.mp4"
+            
+            self.current_file = self.output_dir / filename
+            
+            # Cria novo VideoWriter
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            self.current_writer = cv2.VideoWriter(
+                str(self.current_file), fourcc, self.fps, (width, height)
+            )
+            
+            if not self.current_writer.isOpened():
+                raise Exception("Failed to open new VideoWriter")
+            
+            # Reseta tempo de início do arquivo atual
+            self.recording_start_time = time.time()
+            
+            logging.info(f"✅ Novo VideoWriter criado: {self.current_file}")
+            
+        except Exception as e:
+            logging.error(f"❌ Erro ao recriar VideoWriter: {e}", exc_info=True)
+            raise
 
     def _find_rdp_window(self, connection_info: Dict[str, Any]) -> Optional[int]:
         """Find RDP window handle based on connection information."""
@@ -410,6 +519,10 @@ class SessionRecorder:
         try:
             self.session_id = session_id
             self.stop_event.clear()
+            
+            # Armazena informações da conexão para uso posterior
+            self.current_connection_name = connection_info.get("name", "Unknown")
+            self.current_connection_ip = connection_info.get("ip", "Unknown")
 
             # Set up window tracking based on recording mode
             if self.recording_mode == "rdp_window":
@@ -591,10 +704,51 @@ class SessionRecorder:
                 new_width = int(width * self.resolution_scale)
                 new_height = int(height * self.resolution_scale)
                 frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+            
+            # Obtém dimensões finais do frame
+            final_height, final_width = frame.shape[:2]
+            
+            # Verifica se as dimensões mudaram (janela foi redimensionada ou movida)
+            if self._check_window_dimension_change(final_width, final_height):
+                logging.warning(
+                    f"⚠️ Dimensões mudaram durante gravação! "
+                    f"Recriando VideoWriter para evitar erro 'FFmpeg: Failed to write frame'"
+                )
+                
+                # Recria VideoWriter com novas dimensões
+                connection_info = {
+                    "name": getattr(self, 'current_connection_name', 'Unknown'),
+                    "ip": getattr(self, 'current_connection_ip', 'Unknown')
+                }
+                self._recreate_video_writer(
+                    final_width, 
+                    final_height, 
+                    self.session_id or "unknown", 
+                    connection_info
+                )
 
             # Write frame to video
             if self.current_writer:
-                self.current_writer.write(frame)
+                try:
+                    self.current_writer.write(frame)
+                except Exception as write_error:
+                    logging.error(
+                        f"❌ Erro ao escrever frame (FFmpeg): {write_error}. "
+                        f"Dimensões do frame: {final_width}x{final_height}"
+                    )
+                    # Tenta recriar writer em caso de erro
+                    if "cap_ffmpeg" in str(write_error).lower():
+                        logging.info("Detectado erro cap_ffmpeg, recriando VideoWriter...")
+                        connection_info = {
+                            "name": getattr(self, 'current_connection_name', 'Unknown'),
+                            "ip": getattr(self, 'current_connection_ip', 'Unknown')
+                        }
+                        self._recreate_video_writer(
+                            final_width, 
+                            final_height, 
+                            self.session_id or "unknown", 
+                            connection_info
+                        )
 
         except Exception as e:
             logging.error(f"Error capturing frame: {e}")

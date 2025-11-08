@@ -708,8 +708,28 @@ class Application(ctk.CTk):
         if self._refresh_job:
             self.after_cancel(self._refresh_job)  # Cancela job anterior
 
-        # 0. Limpa proteções órfãs periodicamente (a cada refresh) - ASYNC
-        self._cleanup_orphaned_protections()
+        # 0. Limpeza periódica em background (não bloqueia a UI)
+        def periodic_cleanup():
+            """Executa limpezas de manutenção em background."""
+            try:
+                # Limpa proteções órfãs
+                self._cleanup_orphaned_protections()
+                
+                # A cada ~6 refreshes (30s * 6 = ~3 min), limpa logs órfãos
+                if not hasattr(self, '_cleanup_counter'):
+                    self._cleanup_counter = 0
+                self._cleanup_counter += 1
+                
+                if self._cleanup_counter >= 6:
+                    logs_cleaned = self.db.logs.cleanup_orphaned_access_logs(hours_limit=24, simulate=False)
+                    if logs_cleaned > 0:
+                        logging.info(f"🧹 Manutenção periódica: {logs_cleaned} logs órfãos finalizados")
+                    self._cleanup_counter = 0
+            except Exception as e:
+                logging.error(f"Erro durante limpeza periódica: {e}")
+        
+        # Executa limpeza em thread separada para não bloquear
+        Thread(target=periodic_cleanup, daemon=True).start()
 
         # 1. Busca novos dados em BACKGROUND
         def fetch_data_task():
@@ -946,13 +966,18 @@ class Application(ctk.CTk):
             # 1. Limpa conexões fantasmas primeiro
             self.db.logs.cleanup_ghost_connections()
 
-            # 2. Limpa proteções órfãs (nova funcionalidade)
+            # 2. Limpa logs de acesso órfãos (nova funcionalidade)
+            logs_cleaned = self.db.logs.cleanup_orphaned_access_logs(hours_limit=24, simulate=False)
+            if logs_cleaned > 0:
+                logging.info(f"🧹 Limpeza inicial: {logs_cleaned} logs órfãos finalizados")
+
+            # 3. Limpa proteções órfãs
             self._cleanup_orphaned_protections()
 
-            # 3. Busca os dados
+            # 4. Busca os dados
             initial_raw_data = self.db.connections.select_all(self.user_session_name)
             initial_data = [ConnectionData(row) for row in initial_raw_data]
-            # 4. Agenda a construção da UI na thread principal
+            # 5. Agenda a construção da UI na thread principal
             self.after(0, self._build_initial_tree, initial_data)
         except DatabaseError as e:
             logging.error(f"Falha CRÍTICA no carregamento inicial: {e}", exc_info=True)
@@ -1167,7 +1192,10 @@ class Application(ctk.CTk):
         )
         hb_thread.start()
 
+        # CORREÇÃO: Inicializa log_id ANTES do try para garantir escopo no finally
         log_id = None
+        connection_executed = False
+        
         try:
             # Registra o log de acesso detalhado
             con_tipo = "RDP"  # Padrão
@@ -1186,18 +1214,43 @@ class Application(ctk.CTk):
             log_id = self.db.logs.log_access_start(
                 user_machine_info, con_codigo, con_nome, con_tipo
             )
+            
+            # CORREÇÃO: Valida se log foi criado com sucesso
+            if not log_id:
+                logging.error(f"Falha ao criar log de acesso para conexão {con_codigo}")
+                messagebox.showwarning("Aviso", "Não foi possível registrar o log detalhado da conexão.")
+                # Continua a execução mesmo sem log (não bloqueia o usuário)
 
             # Executa a conexão (rdp.exe, mstsc, etc.)
             # Esta função é bloqueante (espera o processo RDP fechar)
+            connection_executed = True
             connection_func(*args)
 
+        except Exception as e:
+            # CORREÇÃO: Captura exceções durante a conexão
+            logging.error(f"Erro durante execução da conexão {con_codigo}: {e}", exc_info=True)
+            # Finaliza log mesmo em caso de erro
+            if log_id:
+                try:
+                    self.db.logs.log_access_end(log_id)
+                    logging.info(f"Log de acesso {log_id} finalizado após erro")
+                except Exception as log_error:
+                    logging.error(f"Erro ao finalizar log após exceção: {log_error}")
+            raise  # Re-raise a exceção para não suprimir erros
+            
         finally:
             # Esta seção 'finally' é executada assim que 'connection_func' termina
             logging.info(f"Conexão {con_codigo} fechada pelo usuário {username}.")
 
-            # Finaliza o log de acesso detalhado
-            if log_id:
-                self.db.logs.log_access_end(log_id)
+            # CORREÇÃO: Finaliza o log de acesso detalhado com validação
+            if log_id and connection_executed:
+                try:
+                    if self.db.logs.log_access_end(log_id):
+                        logging.info(f"✅ Log de acesso {log_id} finalizado com sucesso")
+                    else:
+                        logging.warning(f"⚠️ Falha ao finalizar log de acesso {log_id} (registro não encontrado)")
+                except Exception as e:
+                    logging.error(f"❌ Erro ao finalizar log de acesso {log_id}: {e}")
 
             # Para o heartbeat
             stop_event.set()
