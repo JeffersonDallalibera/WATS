@@ -49,7 +49,7 @@
     "maximize_window": false,
     "window_mode": "windowed",
     "allow_window_override": true,
-    "fullscreen": false,
+    "fullscreen": true,
     "default_width": 1024,
     "default_height": 768
   }
