@@ -11,7 +11,7 @@
     "enabled": true,
     "auto_start": true,
     "mode": "rdp_window",
-    "output_dir": "C:/Users/jefferson.dallaliber/Videos/Wats",
+    "output_dir": "{USERPROFILE}/Videos/Wats",
     "fps": 10,
     "quality": 23,
     "resolution_scale": 1.0,
@@ -47,7 +47,7 @@
   },
   "rdp": {
     "maximize_window": false,
-    "window_mode": "fullscreen",
+    "window_mode": "windowed",
     "allow_window_override": true,
     "fullscreen": true,
     "default_width": 1024,

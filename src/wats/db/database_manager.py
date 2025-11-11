@@ -15,11 +15,13 @@ from src.wats.db.exceptions import DatabaseConfigError, DatabaseConnectionError
 class DatabaseManager:
     """Gerencia a conexão e a sintaxe (dialeto) para múltiplos bancos."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, use_connection_pool: bool = True):
         self.db_type = settings.DB_TYPE
         self.driver_module: Any = None
         self.connection_string = ""
         self.is_demo = is_demo_mode()
+        self.use_connection_pool = use_connection_pool
+        self.connection_pool = None
 
         # Propriedades de Dialeto SQL
         self.NOW: str = ""
@@ -47,6 +49,10 @@ class DatabaseManager:
             logging.error(f"Erro fatal ao configurar DatabaseManager: {e}")
             raise DatabaseConfigError(f"Erro ao ler as configurações do banco: {e}")
 
+        # Inicializa Connection Pool se habilitado
+        if self.use_connection_pool and not self.is_demo:
+            self._initialize_connection_pool()
+
         self.conn: Optional[Any] = None
 
     def _configure_demo_mode(self):
@@ -56,6 +62,31 @@ class DatabaseManager:
         self.PARAM = "?"
         self.ISNULL = "ISNULL"
         self.IDENTITY_QUERY = "SELECT 1 AS ID;"
+
+    def _initialize_connection_pool(self):
+        """Inicializa o Connection Pool para melhor performance."""
+        try:
+            from src.wats.db.connection_pool import get_connection_pool
+            
+            # Configura tamanho do pool baseado no tipo de aplicação
+            pool_size = 5  # Conexões base
+            max_overflow = 10  # Conexões extras sob demanda
+            
+            self.connection_pool = get_connection_pool(
+                connection_string=self.connection_string,
+                pool_size=pool_size,
+                max_overflow=max_overflow
+            )
+            
+            logging.info(
+                f"Connection Pool initialized (size={pool_size}, overflow={max_overflow})"
+            )
+        except Exception as e:
+            logging.warning(
+                f"Failed to initialize connection pool: {e}. Falling back to direct connections."
+            )
+            self.use_connection_pool = False
+            self.connection_pool = None
 
     def _configure_sqlserver(self, s: Settings):
         try:
@@ -142,13 +173,48 @@ class DatabaseManager:
             return None
 
         try:
+            # Para cursores simples com autocommit, não usamos o pool
+            # O pool é melhor para transações longas
             return self._connect_autocommit().cursor()
         except Exception as e:
             logging.error(f"Falha ao obter cursor com autocommit: {e}")
             return None  # Repositórios devem checar
 
+    def get_pooled_connection(self):
+        """
+        Retorna um context manager de conexão do pool.
+        
+        Usage:
+            with db.get_pooled_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("...")
+                cursor.fetchall()
+        """
+        if self.is_demo:
+            logging.debug("[DEMO] get_pooled_connection() retornando None")
+            return None
+        
+        if self.use_connection_pool and self.connection_pool:
+            return self.connection_pool.get_connection()
+        else:
+            # Fallback: retorna conexão direta
+            from contextlib import contextmanager
+            
+            @contextmanager
+            def _direct_connection():
+                conn = self._connect_autocommit()
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+            
+            return _direct_connection()
+
     def get_transactional_connection(self) -> Any:
-        """Retorna a conexão compartilhada para transações."""
+        """
+        Retorna a conexão compartilhada para transações.
+        NOTA: Para usar o pool, prefira get_pooled_connection() com context manager.
+        """
         # Em modo demo, retorna None para forçar uso do mock service
         if self.is_demo:
             logging.debug(
@@ -157,7 +223,22 @@ class DatabaseManager:
             return None
 
         try:
+            # Mantém comportamento original (conexão compartilhada)
+            # O pool deve ser usado via get_pooled_connection()
             return self._get_connection()
         except Exception as e:
             logging.error(f"Falha ao obter conexão transacional: {e}")
             return None  # Repositórios devem checar
+    
+    def close(self):
+        """Fecha conexões e libera recursos."""
+        if self.conn:
+            try:
+                self.conn.close()
+                logging.debug("Conexão principal fechada")
+            except Exception as e:
+                logging.error(f"Erro ao fechar conexão: {e}")
+        
+        # Não fecha o pool aqui - ele é singleton e será fechado no shutdown da aplicação
+        if self.connection_pool:
+            logging.debug("Connection pool será fechado no shutdown da aplicação")
