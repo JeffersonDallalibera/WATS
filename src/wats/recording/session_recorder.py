@@ -213,19 +213,30 @@ class SessionRecorder:
             
             self.current_file = self.output_dir / filename
             
-            # Cria novo VideoWriter
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.current_writer = cv2.VideoWriter(
-                str(self.current_file), fourcc, self.fps, (width, height)
-            )
-            
-            if not self.current_writer.isOpened():
-                raise Exception("Failed to open new VideoWriter")
-            
+            # Cria novo VideoWriter. Tenta codec primário e fallbacks se necessário.
+            tried_codecs = []
+            for codec in ("mp4v", "XVID", "avc1"):
+                tried_codecs.append(codec)
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                self.current_writer = cv2.VideoWriter(
+                    str(self.current_file), fourcc, self.fps, (width, height)
+                )
+                if self.current_writer.isOpened():
+                    logging.info(f"✅ Novo VideoWriter criado com codec {codec}: {self.current_file}")
+                    break
+
+            if not self.current_writer or not self.current_writer.isOpened():
+                raise Exception(f"Failed to open new VideoWriter (tried: {tried_codecs})")
+
             # Reseta tempo de início do arquivo atual
             self.recording_start_time = time.time()
-            
-            logging.info(f"✅ Novo VideoWriter criado: {self.current_file}")
+
+            # Atualiza dimensões conhecidas para evitar mismatch entre writer e frames
+            try:
+                self.last_frame_width = int(width)
+                self.last_frame_height = int(height)
+            except Exception:
+                pass
             
         except Exception as e:
             logging.error(f"❌ Erro ao recriar VideoWriter: {e}", exc_info=True)
@@ -733,22 +744,37 @@ class SessionRecorder:
                     self.current_writer.write(frame)
                 except Exception as write_error:
                     logging.error(
-                        f"❌ Erro ao escrever frame (FFmpeg): {write_error}. "
-                        f"Dimensões do frame: {final_width}x{final_height}"
+                        f"❌ Erro ao escrever frame (FFmpeg/OpenCV): {write_error}. "
+                        f"Dimensões do frame: {final_width}x{final_height}",
+                        exc_info=True,
                     )
-                    # Tenta recriar writer em caso de erro
-                    if "cap_ffmpeg" in str(write_error).lower():
-                        logging.info("Detectado erro cap_ffmpeg, recriando VideoWriter...")
-                        connection_info = {
-                            "name": getattr(self, 'current_connection_name', 'Unknown'),
-                            "ip": getattr(self, 'current_connection_ip', 'Unknown')
-                        }
-                        self._recreate_video_writer(
-                            final_width, 
-                            final_height, 
-                            self.session_id or "unknown", 
-                            connection_info
+
+                    # Log disk usage to help diagnose write failures (e.g., no space)
+                    try:
+                        import shutil
+
+                        usage = shutil.disk_usage(self.output_dir)
+                        logging.info(
+                            f"Disk usage for {self.output_dir}: total={usage.total}, used={usage.used}, free={usage.free}"
                         )
+                    except Exception:
+                        logging.debug("Could not determine disk usage for output directory")
+
+                    # Sempre tenta recriar o writer em caso de erro de escrita
+                    logging.info("Tentando recriar VideoWriter após erro de escrita...")
+                    connection_info = {
+                        "name": getattr(self, 'current_connection_name', 'Unknown'),
+                        "ip": getattr(self, 'current_connection_ip', 'Unknown')
+                    }
+                    try:
+                        self._recreate_video_writer(
+                            final_width,
+                            final_height,
+                            self.session_id or "unknown",
+                            connection_info,
+                        )
+                    except Exception as recreate_exc:
+                        logging.error(f"Falha ao recriar VideoWriter: {recreate_exc}", exc_info=True)
 
         except Exception as e:
             logging.error(f"Error capturing frame: {e}")
@@ -772,18 +798,26 @@ class SessionRecorder:
                 width = int(width * self.resolution_scale)
                 height = int(height * self.resolution_scale)
 
-            # Create VideoWriter with H.264 codec
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'H264'
-            self.current_writer = cv2.VideoWriter(
-                str(self.current_file), fourcc, self.fps, (width, height)
-            )
+            # Create VideoWriter with preferred codecs and fallback if needed
+            tried_codecs = []
+            for codec in ("mp4v", "XVID", "avc1"):
+                tried_codecs.append(codec)
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                self.current_writer = cv2.VideoWriter(
+                    str(self.current_file), fourcc, self.fps, (width, height)
+                )
+                if self.current_writer.isOpened():
+                    logging.info(
+                        f"Created new video file: {self.current_file} (dimensions: {width}x{height}, codec={codec})"
+                    )
+                    break
 
-            if not self.current_writer.isOpened():
-                raise Exception("Failed to open VideoWriter")
+            if not self.current_writer or not self.current_writer.isOpened():
+                raise Exception(f"Failed to open VideoWriter (tried: {tried_codecs})")
 
-            logging.info(
-                f"Created new video file: {self.current_file} (dimensions: {width}x{height})"
-            )
+            # Store writer dimensions to prevent unexpected mismatches
+            self.last_frame_width = int(width)
+            self.last_frame_height = int(height)
 
         except Exception as e:
             logging.error(f"Error creating video file: {e}", exc_info=True)
