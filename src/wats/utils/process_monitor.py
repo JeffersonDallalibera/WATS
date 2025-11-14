@@ -69,11 +69,18 @@ class RdpProcessMonitor:
                             )
                             rdp_processes.append(rdp_info)
                             
+                            logging.debug(f"Encontrado processo RDP: PID {rdp_info.pid}, Servidor {rdp_info.server_ip}, Usuário {rdp_info.user}")
+                            
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
                     
         except Exception as e:
             logging.error(f"Erro ao listar processos RDP: {e}")
+        
+        # Validação final antes de retornar
+        if not isinstance(rdp_processes, list):
+            logging.error(f"ERRO CRÍTICO: rdp_processes não é uma lista! Tipo: {type(rdp_processes)}")
+            return []
         
         return rdp_processes
     
@@ -83,7 +90,11 @@ class RdpProcessMonitor:
         # Para mstsc.exe: /v:192.168.1.100 ou mstsc /v:server.domain.com
         match = re.search(r'/v:([^\s]+)', cmdline)
         if match:
-            return match.group(1)
+            server = match.group(1)
+            # Remove porta se houver (ex: 192.168.1.100:3389 -> 192.168.1.100)
+            if ':' in server:
+                server = server.split(':')[0]
+            return server
         return None
     
     def _extract_title_from_cmdline(self, cmdline: str) -> Optional[str]:
@@ -108,7 +119,7 @@ class RdpProcessMonitor:
         Verifica se existe um processo RDP ativo para um servidor específico.
         
         Args:
-            server_ip: IP do servidor para verificar
+            server_ip: IP ou hostname do servidor para verificar
             user: Usuário específico (opcional)
             title: Título da conexão (opcional) 
             tolerance_seconds: Tolerância em segundos para criação recente do processo
@@ -118,25 +129,58 @@ class RdpProcessMonitor:
         """
         try:
             active_processes = self.get_active_rdp_processes()
+            
+            # Validação defensiva
+            if not isinstance(active_processes, list):
+                logging.error(f"[PROCESS_CHECK] get_active_rdp_processes retornou tipo inválido: {type(active_processes)}")
+                return True  # Em caso de erro, assume ativo
+            
             current_time = time.time()
             
+            # Remove porta do server_ip se presente
+            server_ip_clean = server_ip.split(':')[0] if ':' in server_ip else server_ip
+            
+            logging.debug(f"[PROCESS_CHECK] Verificando RDP para {server_ip_clean} (user={user}, title={title})")
+            logging.debug(f"[PROCESS_CHECK] Processos RDP ativos: {len(active_processes)}")
+            
             for proc in active_processes:
-                # Verifica se corresponde ao servidor
-                if proc.server_ip == server_ip:
-                    # Verificações opcionais
-                    if user and proc.user != user:
-                        continue
-                    if title and proc.server_name != title:
+                # Validação adicional
+                if not isinstance(proc, RdpProcessInfo):
+                    logging.error(f"[PROCESS_CHECK] Item na lista não é RdpProcessInfo: {type(proc)}")
+                    continue
+                    
+                logging.debug(f"[PROCESS_CHECK] Processo encontrado - IP: {proc.server_ip}, User: {proc.user}, Title: {proc.server_name}, PID: {proc.pid}")
+                
+                # Verifica se corresponde ao servidor (IP ou hostname)
+                # Compara tanto o valor direto quanto por título (que pode conter o nome do servidor)
+                matches_server = (
+                    proc.server_ip == server_ip_clean or
+                    proc.server_name == server_ip_clean or
+                    (title and proc.server_name == title)
+                )
+                
+                if matches_server:
+                    # Verificações opcionais (mais flexíveis)
+                    if user and proc.user != "Unknown" and proc.user != user:
+                        logging.debug(f"[PROCESS_CHECK] Usuário não corresponde: esperado '{user}', encontrado '{proc.user}'")
                         continue
                     
                     # Verifica se não é um processo muito recente (evita falsos positivos)
-                    if current_time - proc.create_time > tolerance_seconds:
+                    uptime = current_time - proc.create_time
+                    if uptime > tolerance_seconds:
+                        logging.info(f"[PROCESS_CHECK] ✓ Processo RDP ATIVO encontrado para {server_ip_clean} via {proc.server_ip} (PID {proc.pid}, uptime {int(uptime)}s)")
                         return True
+                    else:
+                        logging.debug(f"[PROCESS_CHECK] Processo muito recente ({int(uptime)}s), ignorando")
             
+            logging.warning(f"[PROCESS_CHECK] ✗ Nenhum processo RDP ativo encontrado para {server_ip_clean}")
             return False
             
+        except AttributeError as e:
+            logging.error(f"Erro de atributo ao verificar processo RDP: {e}", exc_info=True)
+            return True  # Em caso de erro, assume que está ativo para não limpar incorretamente
         except Exception as e:
-            logging.error(f"Erro ao verificar processo RDP ativo: {e}")
+            logging.error(f"Erro ao verificar processo RDP ativo: {e}", exc_info=True)
             return True  # Em caso de erro, assume que está ativo para não limpar incorretamente
     
     def register_rdp_connection(self, server_ip: str, user: str, title: str) -> Optional[int]:

@@ -93,6 +93,10 @@ class ConnectionData:
         self.particularidade: Optional[str] = row[9]  # Link Wiki cru
         self.cliente: Optional[str] = row[10]
         self.con_tipo: str = row[11]  # Tipo da conexão
+        
+        # DEBUG: Log do IP carregado
+        if self.ip and "hs103" in self.ip.lower():
+            logging.debug(f"[CONNECTIONDATA] Carregado do DB - ID:{self.con_codigo}, IP:{self.ip}, Nome:{self.nome}")
 
         # Dados derivados para a Treeview
         self.wiki_display_text = self._get_wiki_display(self.particularidade)
@@ -1226,12 +1230,21 @@ class Application(ctk.CTk):
             rdp_user = connection_data.get("user", "")
             connection_title = connection_data.get("title", "")
             
+            # LOG DETALHADO: Mostra todos os dados da conexão
+            logging.info(f"[HB {con_id}] DADOS DA CONEXÃO:")
+            logging.info(f"[HB {con_id}]   - IP original: {connection_data.get('ip', 'N/A')}")
+            logging.info(f"[HB {con_id}]   - IP processado: {server_ip}")
+            logging.info(f"[HB {con_id}]   - Usuário RDP: {rdp_user}")
+            logging.info(f"[HB {con_id}]   - Título: {connection_title}")
+            logging.info(f"[HB {con_id}]   - DB_ID: {connection_data.get('db_id', 'N/A')}")
+            
             missed_heartbeats = 0
             max_missed_heartbeats = 3  # Máximo de heartbeats perdidos antes de assumir desconexão
             
             while not stop_flag.wait(60):
                 try:
                     # 1. Verifica se o processo RDP ainda está ativo
+                    logging.debug(f"[HB {con_id}] Chamando is_rdp_connection_active('{server_ip}', '{rdp_user}', '{connection_title}')")
                     rdp_active = is_rdp_connection_active(server_ip, rdp_user, connection_title)
                     
                     if not rdp_active:

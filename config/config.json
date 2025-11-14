@@ -8,18 +8,39 @@
     "port": "1433"
   },
   "recording": {
-    "enabled": true,
     "auto_start": true,
     "mode": "rdp_window",
     "output_dir": "{USERPROFILE}/Videos/Wats",
-    "fps": 10,
-    "quality": 23,
+    "fps": 5,
+    "quality": 40,
     "resolution_scale": 1.0,
-    "max_file_size_mb": 100,
+    "max_file_size_mb": 1024,
     "max_duration_minutes": 30,
     "max_total_size_gb": 10.0,
     "max_file_age_days": 30,
     "cleanup_interval_hours": 6,
+    "smart_recording": {
+      "window_tracking_interval": 1.0,
+      "inactivity_timeout_minutes": 5,
+      "pause_on_minimized": true,
+      "pause_on_covered": true,
+      "pause_on_inactive": true,
+      "create_new_file_after_pause": true,
+      "create_new_file_after_inactivity": true,
+      "debug_window_tracking": false,
+      "debug_activity_monitoring": false,
+      "window_reacquisition_attempts": 5,
+      "window_reacquisition_delay": 2.0,
+      "activity_detection_interval": 0.5,
+      "mouse_sensitivity": 5,
+      "save_activity_log": false,
+      "save_window_state_log": false
+    },
+    "compression": {
+      "enabled": true,
+      "crf": 28,
+      "preset": "veryfast"
+    },
     "session_protection": {
       "enabled": true,
       "sanitize_metadata": true,
@@ -42,15 +63,57 @@
   "application": {
     "log_level": "INFO",
     "theme": "Dark",
-    "window_title": "WATS - Sistema de Gravação RDP",
+    "auto_consent": true,
+    "window_title": "WATS",
+    "window_geometry": "1200x800",
+    "window_resizable": true,
+    "minimize_to_tray": true,
+    "start_minimized": false,
+    "check_updates": true,
+    "language": "pt-BR",
     "monitor": 2
   },
   "rdp": {
-    "maximize_window": false,
+    "maximize_window": true,
     "window_mode": "windowed",
     "allow_window_override": true,
-    "fullscreen": true,
-    "default_width": 1024,
-    "default_height": 768
+    "fullscreen": false,
+    "default_width": 1920,
+    "default_height": 1080
+  },
+  "ui": {
+    "show_fps_counter": false,
+    "show_recording_status": true,
+    "notification_enabled": true,
+    "sound_notifications": false,
+    "toast_duration_seconds": 3,
+    "confirm_exit": true,
+    "remember_window_position": true,
+    "dark_mode": true
+  },
+  "security": {
+    "encrypt_recordings": false,
+    "encryption_key": "",
+    "require_password": false,
+    "session_timeout_minutes": 0,
+    "audit_log_enabled": true,
+    "restrict_file_access": false
+  },
+  "performance": {
+    "max_cpu_usage_percent": 80,
+    "memory_limit_mb": 1024,
+    "disk_space_check_enabled": true,
+    "min_free_space_gb": 5,
+    "background_cleanup_enabled": true,
+    "optimize_for_battery": false
+  },
+  "network": {
+    "proxy_enabled": false,
+    "proxy_host": "",
+    "proxy_port": "",
+    "proxy_username": "",
+    "proxy_password": "",
+    "connection_timeout": 30,
+    "retry_attempts": 3
   }
 }

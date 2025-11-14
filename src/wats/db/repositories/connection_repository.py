@@ -40,11 +40,14 @@ class ConnectionRepository(BaseRepository):
             LEFT JOIN Grupo_WTS Gru ON Con.Gru_Codigo = Gru.Gru_Codigo and Gru.Gru_codigo <> 33
             LEFT JOIN (
                 SELECT Con_Codigo,
-                    (CASE
-                        WHEN MIN(Usu_Nome) = MAX(Usu_Nome) THEN MIN(Usu_Nome)
-                        ELSE MIN(Usu_Nome) + '|' + MAX(Usu_Nome)
-                    END) AS Usu_Nome
-                FROM usuario_conexao_wts
+                    STUFF((
+                        SELECT '|' + Usu_Nome
+                        FROM usuario_conexao_wts uc2
+                        WHERE uc2.Con_Codigo = uc1.Con_Codigo
+                        ORDER BY Usu_Nome
+                        FOR XML PATH(''), TYPE
+                    ).value('.', 'NVARCHAR(MAX)'), 1, 1, '') AS Usu_Nome
+                FROM usuario_conexao_wts uc1
                 GROUP BY Con_Codigo
             ) Uco ON Con.Con_Codigo = Uco.Con_Codigo
             LEFT JOIN conexao_wts C2 ON Con.Con_Codigo = C2.Con_Codigo

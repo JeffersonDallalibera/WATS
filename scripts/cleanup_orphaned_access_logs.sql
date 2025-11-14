@@ -157,9 +157,12 @@ BEGIN
             -- Se não encontrou heartbeat, usa +1 hora após o início como estimativa
             DATEADD(HOUR, 1, la.Log_DataHora_Inicio)
         ),
-        la.Log_Observacoes = COALESCE(la.Log_Observacoes + ' | ', '') + 
-                            '⚠️ Finalizado automaticamente por limpeza de logs órfãos em ' + 
-                            CONVERT(VARCHAR, GETDATE(), 120)
+        la.Log_Observacoes = LEFT(
+            COALESCE(la.Log_Observacoes + ' | ', '') + 
+            'Finalizado automaticamente em ' + 
+            CONVERT(VARCHAR(20), GETDATE(), 120),
+            1000
+        )
         FROM Log_Acesso_WTS la
         INNER JOIN @LogsParaFinalizar lpf ON la.Log_Id = lpf.Log_Id
         WHERE lpf.Possui_Conexao_Ativa = 0;  -- Apenas logs SEM conexão ativa
@@ -168,9 +171,12 @@ BEGIN
         
         -- Para logs COM conexão ativa, apenas adiciona observação (não finaliza)
         UPDATE la
-        SET la.Log_Observacoes = COALESCE(la.Log_Observacoes + ' | ', '') + 
-                                '⚠️ Log antigo mas conexão ainda ativa - verificado em ' + 
-                                CONVERT(VARCHAR, GETDATE(), 120)
+        SET la.Log_Observacoes = LEFT(
+            COALESCE(la.Log_Observacoes + ' | ', '') + 
+            'Log antigo mas conexao ativa em ' + 
+            CONVERT(VARCHAR(20), GETDATE(), 120),
+            1000
+        )
         FROM Log_Acesso_WTS la
         INNER JOIN @LogsParaFinalizar lpf ON la.Log_Id = lpf.Log_Id
         WHERE lpf.Possui_Conexao_Ativa = 1;  -- Apenas logs COM conexão ativa

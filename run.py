@@ -8,7 +8,7 @@ import customtkinter as ctk  # Importa customtkinter para o diálogo
 
 # Importa as funções/classes necessárias de config
 # Nota: NÃO importamos 'settings' aqui ainda
-from src.wats.config import setup_logging, load_environment_variables, Settings
+from src.wats.config import setup_logging, load_environment_variables, Settings, get_app_config
 
 
 class ConsentDialog(ctk.CTkToplevel):
@@ -77,11 +77,15 @@ class ConsentDialog(ctk.CTkToplevel):
         self._reject()
 
     def show(self):
+        
         """Mostra o diálogo e espera pela resposta."""
         # Cria uma referência à janela pai para esperar por ela
-        master = self.master
-        master.wait_window(self)
-        return self._result
+        if get_app_config().get("auto_consent", True):
+            self._accept()
+        else:    
+            master = self.master
+            master.wait_window(self)
+            return self._result
 
 
 def main():
@@ -104,19 +108,25 @@ def main():
     temp_root = None  # Inicializa fora do try
     consent_given = False
     try:
-        logging.info("Exibindo diálogo de consentimento...")
-        # Precisamos de uma root window temporária para o Toplevel
-        temp_root = ctk.CTk()
-        temp_root.withdraw()  # Esconde a janela root temporária
+        # Se a configuração de auto_consent estiver ativada, não cria nem mostra
+        # o diálogo (evita exibir o texto padrão). Apenas aceita automaticamente.
+        if get_app_config().get("auto_consent", True):
+            logging.info("auto_consent ativo: pulando diálogo de consentimento e aceitando automaticamente.")
+            consent_given = True
+        else:
+            logging.info("Exibindo diálogo de consentimento...")
+            # Precisamos de uma root window temporária para o Toplevel
+            temp_root = ctk.CTk()
+            temp_root.withdraw()  # Esconde a janela root temporária
 
-        # Define o tema rapidamente sem carregar preferências
-        ctk.set_appearance_mode("System")
+            # Define o tema rapidamente sem carregar preferências
+            ctk.set_appearance_mode("System")
 
-        dialog = ConsentDialog(temp_root)
-        consent_given = dialog.show()  # Bloqueia até o usuário escolher
+            dialog = ConsentDialog(temp_root)
+            consent_given = dialog.show()  # Bloqueia até o usuário escolher
 
-        temp_root.destroy()  # Destroi a root temporária
-        temp_root = None  # Limpa a referência
+            temp_root.destroy()  # Destroi a root temporária
+            temp_root = None  # Limpa a referência
 
         if consent_given is True:
             logging.info("Consentimento de gravação ACEITO pelo usuário.")
