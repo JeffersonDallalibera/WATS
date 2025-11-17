@@ -100,6 +100,7 @@ class LogRepository(BaseRepository):
         return 0
 
     def update_heartbeat(self, con_codigo: int, username: str) -> bool:
+        """Atualiza heartbeat do usuário. Retorna False se o registro não existe mais."""
         # Dialeto: GETDATE() -> self.db.NOW
         query = f"UPDATE Usuario_Conexao_WTS SET Usu_Last_Heartbeat = {self.db.NOW} WHERE Con_Codigo = {self.db.PARAM} AND Usu_Nome = {self.db.PARAM}"
         try:
@@ -107,7 +108,17 @@ class LogRepository(BaseRepository):
                 if not cursor:
                     raise DatabaseConnectionError("Falha ao obter cursor.")
                 cursor.execute(query, (con_codigo, username))
-                return cursor.rowcount > 0
+                rows_affected = cursor.rowcount
+                
+                # CORREÇÃO: Se não atualizou nenhuma linha, o usuário foi removido do banco
+                if rows_affected == 0:
+                    logging.warning(
+                        f"[HEARTBEAT_SYNC] Usuário '{username}' não encontrado na conexão {con_codigo}. "
+                        "Registro foi removido (desconexão forçada ou limpeza automática)."
+                    )
+                    return False
+                    
+                return True
         except self.driver_module.Error as e:
             logging.error(f"Erro ao atualizar heartbeat: {e}")
         return False

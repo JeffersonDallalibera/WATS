@@ -114,7 +114,7 @@ class UserRepository(BaseRepository):
         if not conn:
             return False, "Falha ao conectar."
 
-        q_create = """
+        q_create = f"""
             INSERT INTO Usuario_Sistema_WTS (Usu_Nome, Usu_Email, Usu_Ativo, Usu_Is_Admin)
             VALUES ({self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM}, {self.db.PARAM})
         """

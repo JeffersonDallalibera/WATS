@@ -1296,8 +1296,32 @@ class Application(ctk.CTk):
                     
                     # 2. Envia heartbeat normal apenas se processo está ativo
                     if rdp_active:
-                        if not self.db.logs.update_heartbeat(con_id, user):
-                            logging.warning(f"[HB {con_id}] Falha ao enviar heartbeat para {server_ip}")
+                        heartbeat_sent = self.db.logs.update_heartbeat(con_id, user)
+                        
+                        # CORREÇÃO: Se update_heartbeat retorna False, o registro foi removido do banco
+                        # (desconexão forçada ou limpeza automática). Parar o heartbeat.
+                        if not heartbeat_sent:
+                            logging.warning(
+                                f"[HB {con_id}] Registro do usuário {user} não existe mais no banco. "
+                                "Parando heartbeat e limpando UI."
+                            )
+                            stop_flag.set()
+                            
+                            # Agenda limpeza da UI na thread principal
+                            def cleanup_removed_user():
+                                try:
+                                    logging.info(f"[CLEANUP] Limpando UI para usuário removido {user} da conexão {con_id}")
+                                    self._cleanup_ui_after_disconnect(con_id, user)
+                                    
+                                    # Remove do active_heartbeats
+                                    if con_id in self.active_heartbeats:
+                                        del self.active_heartbeats[con_id]
+                                        
+                                except Exception as e:
+                                    logging.error(f"[CLEANUP] Erro ao limpar UI após detectar remoção: {e}")
+                            
+                            self.after(0, cleanup_removed_user)
+                            break
                     
                 except Exception as e:
                     logging.error(f"[HB {con_id}] Erro durante heartbeat: {e}")
@@ -1371,13 +1395,23 @@ class Application(ctk.CTk):
                 except Exception as e:
                     logging.error(f"❌ Erro ao finalizar log de acesso {log_id}: {e}")
 
-            # Para o heartbeat
+            # CORREÇÃO: Para o heartbeat ANTES de remover do banco para evitar race condition
+            # Se não parar primeiro, o heartbeat pode tentar atualizar enquanto estamos deletando
+            logging.info(f"[DISCONNECT] Parando heartbeat da conexão {con_codigo}")
             stop_event.set()
+            
+            # Aguarda um breve momento para garantir que o heartbeat parou
+            import time
+            time.sleep(0.1)
+            
             if con_codigo in self.active_heartbeats:
                 del self.active_heartbeats[con_codigo]
+                logging.info(f"[DISCONNECT] Heartbeat removido de active_heartbeats")
 
             # Deleta o log de conexão ativa usando usuário WATS
+            logging.info(f"[DISCONNECT] Removendo registro do banco para usuário {self.user_session_name}")
             if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
+                logging.info(f"[DISCONNECT] Registro removido com sucesso do banco")
                 try:
                     if self.tree.exists(selected_item_id):
                         current_users = self.tree.item(selected_item_id, "values")[7]
@@ -1385,6 +1419,7 @@ class Application(ctk.CTk):
                             users_list = [u for u in current_users.split("|") if u != username]
                             new_users = "|".join(users_list)
                             self._update_username_cell(selected_item_id, new_users)
+                            logging.info(f"[DISCONNECT] UI atualizada, usuário removido da lista")
                 except (IndexError, Exception) as e:
                     logging.warning(f"Erro ao limpar UI após desconexão: {e}")
                     self.after(0, self._populate_tree)

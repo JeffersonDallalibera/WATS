@@ -246,7 +246,7 @@ def setup_logging():
     log_level_str = os.getenv("LOG_LEVEL", config_log_level).upper()
     log_level = getattr(logging, log_level_str, logging.INFO)  # Converte string para nível de log
     log_format = (
-        "%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s"  # Adiciona número da linha
+        "%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d - %(message)s"  # Mostra arquivo:linha ao invés de root
     )
 
     print(
