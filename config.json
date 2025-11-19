@@ -8,7 +8,6 @@
     "port": "1433"
   },
   "recording": {
-    ""
     "enabled": true,
     "auto_start": true,
     "mode": "rdp_window",
@@ -63,9 +62,9 @@
     "max_file_age_days": 30
   },
   "application": {
-    "log_level": "INFO",
+    "log_level": "WARNING",
     "theme": "Dark",
-    "auto_consent": true,
+    "auto_consent": false,
     "window_title": "WATS - Sistema de Gravação RDP",
     "window_geometry": "1200x800",
     "window_resizable": true,

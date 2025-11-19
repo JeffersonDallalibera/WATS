@@ -14,6 +14,15 @@ from dataclasses import dataclass
 import re
 import time
 
+# Importação condicional do win32gui para verificar janelas RDP
+try:
+    import win32gui
+    import win32process
+    WIN32_AVAILABLE = True
+except ImportError:
+    WIN32_AVAILABLE = False
+    logging.warning("win32gui não disponível - detecção de janelas RDP desabilitada")
+
 
 @dataclass
 class RdpProcessInfo:
@@ -73,6 +82,11 @@ class RdpProcessMonitor:
                             
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
+            
+            # NOVO: Se não encontrou processos, tenta buscar por janelas RDP (fallback)
+            if not rdp_processes and WIN32_AVAILABLE:
+                logging.debug("[PROCESS_CHECK] Nenhum processo encontrado, tentando buscar por janelas RDP...")
+                rdp_processes.extend(self._get_rdp_processes_from_windows())
                     
         except Exception as e:
             logging.error(f"Erro ao listar processos RDP: {e}")
@@ -81,6 +95,70 @@ class RdpProcessMonitor:
         if not isinstance(rdp_processes, list):
             logging.error(f"ERRO CRÍTICO: rdp_processes não é uma lista! Tipo: {type(rdp_processes)}")
             return []
+        
+        return rdp_processes
+    
+    def _get_rdp_processes_from_windows(self) -> List[RdpProcessInfo]:
+        """
+        Busca processos RDP através de janelas abertas (fallback).
+        
+        Returns:
+            Lista de processos RDP encontrados via janelas
+        """
+        rdp_processes = []
+        
+        if not WIN32_AVAILABLE:
+            return rdp_processes
+        
+        def enum_windows_callback(hwnd, results):
+            if win32gui.IsWindowVisible(hwnd):
+                window_title = win32gui.GetWindowText(hwnd)
+                
+                # Procura por títulos típicos de janelas RDP
+                rdp_indicators = [
+                    'Remote Desktop Plus',
+                    'Conexão de Área de Trabalho Remota',
+                    'Remote Desktop Connection',
+                    'mstsc.exe'
+                ]
+                
+                if any(indicator in window_title for indicator in rdp_indicators):
+                    try:
+                        # Obtém o PID do processo que possui a janela
+                        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                        
+                        # Tenta extrair IP do título da janela
+                        # Formato comum: "Remote Desktop Plus - 192.168.1.110:3389 - ..."
+                        ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', window_title)
+                        server_ip = ip_match.group(1) if ip_match else "Unknown"
+                        
+                        # Obtém informações do processo
+                        try:
+                            proc = psutil.Process(pid)
+                            create_time = proc.create_time()
+                            cmdline = ' '.join(proc.cmdline())
+                        except:
+                            create_time = time.time()
+                            cmdline = f"Window: {window_title}"
+                        
+                        rdp_info = RdpProcessInfo(
+                            pid=pid,
+                            server_ip=server_ip,
+                            server_name=window_title,
+                            user="Unknown",
+                            create_time=create_time,
+                            cmdline=cmdline
+                        )
+                        results.append(rdp_info)
+                        logging.debug(f"[WINDOW_SEARCH] Encontrada janela RDP: {window_title} (PID {pid}, IP {server_ip})")
+                        
+                    except Exception as e:
+                        logging.debug(f"[WINDOW_SEARCH] Erro ao processar janela: {e}")
+        
+        try:
+            win32gui.EnumWindows(enum_windows_callback, rdp_processes)
+        except Exception as e:
+            logging.error(f"[WINDOW_SEARCH] Erro ao enumerar janelas: {e}")
         
         return rdp_processes
     

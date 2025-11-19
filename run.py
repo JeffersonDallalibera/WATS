@@ -3,12 +3,48 @@
 import sys
 import time
 import logging
+import os
+import json
 from tkinter import messagebox  # Usado para erros MUITO iniciais
 import customtkinter as ctk  # Importa customtkinter para o diálogo
 
 # Importa as funções/classes necessárias de config
 # Nota: NÃO importamos 'settings' aqui ainda
 from src.wats.config import setup_logging, load_environment_variables, Settings, get_app_config
+
+
+def get_config_file_path():
+    """Retorna o caminho do arquivo config.json"""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def update_config_auto_consent(value):
+    """
+    Atualiza o valor de auto_consent no config.json
+    
+    Args:
+        value: True para aceitar automaticamente (não perguntar mais), False para perguntar sempre
+    """
+    config_path = get_config_file_path()
+    try:
+        # Lê o config atual
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        
+        # Atualiza auto_consent
+        if "application" not in config:
+            config["application"] = {}
+        config["application"]["auto_consent"] = value
+        
+        # Salva de volta
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        logging.info(f"✓ config.json atualizado: auto_consent = {value}")
+        return True
+    except Exception as e:
+        logging.error(f"Erro ao atualizar config.json: {e}")
+        return False
 
 
 class ConsentDialog(ctk.CTkToplevel):
@@ -79,13 +115,9 @@ class ConsentDialog(ctk.CTkToplevel):
     def show(self):
         
         """Mostra o diálogo e espera pela resposta."""
-        # Cria uma referência à janela pai para esperar por ela
-        if get_app_config().get("auto_consent", True):
-            self._accept()
-        else:    
-            master = self.master
-            master.wait_window(self)
-            return self._result
+        master = self.master
+        master.wait_window(self)
+        return self._result
 
 
 def main():
@@ -108,13 +140,15 @@ def main():
     temp_root = None  # Inicializa fora do try
     consent_given = False
     try:
-        # Se a configuração de auto_consent estiver ativada, não cria nem mostra
-        # o diálogo (evita exibir o texto padrão). Apenas aceita automaticamente.
-        if get_app_config().get("auto_consent", True):
-            logging.info("auto_consent ativo: pulando diálogo de consentimento e aceitando automaticamente.")
+        # ⚡ auto_consent = True: usuário já aceitou antes (config.json foi atualizado)
+        # ⚡ auto_consent = False: primeira vez, precisa mostrar diálogo
+        auto_consent = get_app_config().get("auto_consent", False)
+        
+        if auto_consent:
+            logging.info("✓ auto_consent=True no config.json - usuário já consentiu anteriormente")
             consent_given = True
         else:
-            logging.info("Exibindo diálogo de consentimento...")
+            logging.info("📋 auto_consent=False - primeira execução, exibindo diálogo de consentimento...")
             # Precisamos de uma root window temporária para o Toplevel
             temp_root = ctk.CTk()
             temp_root.withdraw()  # Esconde a janela root temporária
@@ -127,6 +161,11 @@ def main():
 
             temp_root.destroy()  # Destroi a root temporária
             temp_root = None  # Limpa a referência
+            
+            # ⚡ SALVA O CONSENTIMENTO: Atualiza config.json para não perguntar novamente
+            if consent_given:
+                update_config_auto_consent(True)
+                logging.info("✓ Consentimento aceito e salvo no config.json (auto_consent=True)")
 
         if consent_given is True:
             logging.info("Consentimento de gravação ACEITO pelo usuário.")

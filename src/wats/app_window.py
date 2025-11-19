@@ -717,6 +717,9 @@ class Application(ctk.CTk):
         def periodic_cleanup():
             """Executa limpezas de manutenção em background."""
             try:
+                # ⚡ NOVO: Limpa conexões órfãs (usuários sem processo RDP ativo)
+                self._cleanup_orphaned_connections()
+                
                 # Limpa proteções órfãs
                 self._cleanup_orphaned_protections()
                 
@@ -1184,10 +1187,19 @@ class Application(ctk.CTk):
             # Em caso de erro, força refresh completo
             self._populate_tree()
 
-    def _execute_connection(self, data: Dict[str, Any], connection_func, *args):
+    def _execute_connection(self, data: Dict[str, Any], connection_func, *args, recording_session_id=None, recording_connection_info=None):
         """
         Lida com a lógica de log, heartbeat e atualização da UI
         para qualquer tipo de conexão (esta versão é apenas para RDP/Gerenciada).
+        
+        OTIMIZAÇÃO: UI primeiro, validações depois (threads assíncronas)
+        
+        Args:
+            data: Dados da conexão
+            connection_func: Função que executa a conexão
+            *args: Argumentos para connection_func
+            recording_session_id: ID da sessão de gravação (opcional)
+            recording_connection_info: Informações para gravação (opcional)
         """
         selection = self.tree.selection()
         if not selection:
@@ -1202,19 +1214,67 @@ class Application(ctk.CTk):
             )
             return
 
-        # Registro da conexão com usuário WATS completo para auditoria
-        if not self.db.logs.insert_connection_log(
-            con_codigo, self.user_session_name, self.user_ip, self.computer_name, self.os_user
-        ):
-            messagebox.showwarning("Aviso", "Não foi possível registrar o início da conexão.")
-            return
-
+        # ⚡ OTIMIZAÇÃO 1: ADICIONA USUÁRIO NA UI IMEDIATAMENTE (1-5ms)
+        # Feedback visual instantâneo para o usuário
+        logging.info(f"[PERF] Adicionando usuário {username} à UI IMEDIATAMENTE")
         try:
             current_users = self.tree.item(selected_item_id, "values")[7]
             new_users = username if not current_users else f"{current_users}|{username}"
             self._update_username_cell(selected_item_id, new_users)
-        except (IndexError, Exception):
-            pass
+            logging.info(f"[PERF] ✓ Usuário adicionado à UI em <5ms")
+        except (IndexError, Exception) as e:
+            logging.error(f"[PERF] Erro ao adicionar usuário à UI: {e}")
+            return
+
+        # ⚡ OTIMIZAÇÃO 2: OPERAÇÕES DE BANCO EM THREAD ASSÍNCRONA
+        # Não bloqueia a UI nem o início do RDP
+        db_success = {'connection_log': False, 'access_log': None}
+        
+        def async_db_operations():
+            """Executa operações de banco em thread separada."""
+            try:
+                # Registro da conexão
+                logging.info(f"[PERF] Iniciando insert_connection_log em thread assíncrona")
+                db_success['connection_log'] = self.db.logs.insert_connection_log(
+                    con_codigo, self.user_session_name, self.user_ip, self.computer_name, self.os_user
+                )
+                
+                if not db_success['connection_log']:
+                    logging.error(f"[PERF] Falha ao registrar conexão no banco")
+                    # Remove da UI se falhou
+                    def rollback_ui():
+                        try:
+                            current_users = self.tree.item(selected_item_id, "values")[7]
+                            if current_users:
+                                users_list = [u for u in current_users.split("|") if u != username]
+                                new_users = "|".join(users_list)
+                                self._update_username_cell(selected_item_id, new_users)
+                        except Exception as e:
+                            logging.error(f"[PERF] Erro ao reverter UI: {e}")
+                    self.after(0, rollback_ui)
+                    return
+                
+                # Log de acesso detalhado
+                con_tipo = "RDP"
+                con_nome = data.get("title", "N/A")
+                try:
+                    row_original = next(r for r in self.data_cache if r.con_codigo == con_codigo)
+                    con_tipo = row_original.con_tipo
+                    con_nome = row_original.nome
+                except (StopIteration, IndexError):
+                    pass
+                
+                user_machine_info = f"{self.user_session_name}@{self.computer_name}"
+                db_success['access_log'] = self.db.logs.log_access_start(
+                    user_machine_info, con_codigo, con_nome, con_tipo
+                )
+                logging.info(f"[PERF] ✓ Operações de banco concluídas (log_id={db_success['access_log']})")
+                
+            except Exception as e:
+                logging.error(f"[PERF] Erro em operações de banco: {e}")
+        
+        # Inicia thread de banco (não bloqueia)
+        Thread(target=async_db_operations, daemon=True, name=f"DB-{con_codigo}").start()
 
         stop_event = Event()
         self.active_heartbeats[con_codigo] = stop_event
@@ -1239,9 +1299,10 @@ class Application(ctk.CTk):
             logging.info(f"[HB {con_id}]   - DB_ID: {connection_data.get('db_id', 'N/A')}")
             
             missed_heartbeats = 0
-            max_missed_heartbeats = 3  # Máximo de heartbeats perdidos antes de assumir desconexão
+            max_missed_heartbeats = 3  # AUMENTADO: Tolerância para evitar falsos positivos (6s total)
+            heartbeat_interval = 2  # Intervalo muito curto para detecção rápida
             
-            while not stop_flag.wait(60):
+            while not stop_flag.wait(heartbeat_interval):
                 try:
                     # 1. Verifica se o processo RDP ainda está ativo
                     logging.debug(f"[HB {con_id}] Chamando is_rdp_connection_active('{server_ip}', '{rdp_user}', '{connection_title}')")
@@ -1332,68 +1393,135 @@ class Application(ctk.CTk):
             target=heartbeat_task,
             args=(con_codigo, self.user_session_name, stop_event),
             daemon=True,
+            name=f"Heartbeat-{con_codigo}"
         )
         hb_thread.start()
 
-        # CORREÇÃO: Inicializa log_id ANTES do try para garantir escopo no finally
-        log_id = None
+        # OTIMIZAÇÃO: Não precisa mais de try/except complexo
+        # As operações de banco já estão em thread assíncrona
         connection_executed = False
         
         try:
-            # Registra o log de acesso detalhado
-            con_tipo = "RDP"  # Padrão
-            con_nome = data.get("title", "N/A")
-            try:
-                row_original = next(r for r in self.data_cache if r.con_codigo == con_codigo)
-                con_tipo = row_original.con_tipo
-                con_nome = row_original.nome
-            except (StopIteration, IndexError):
-                logging.warning(
-                    f"Não foi possível encontrar o tipo/nome da conexão {con_codigo} no cache para log."
-                )
-
-            # Agora incluindo o usuário WATS no log de acesso
-            user_machine_info = f"{self.user_session_name}@{self.computer_name}"
-            log_id = self.db.logs.log_access_start(
-                user_machine_info, con_codigo, con_nome, con_tipo
-            )
-            
-            # CORREÇÃO: Valida se log foi criado com sucesso
-            if not log_id:
-                logging.error(f"Falha ao criar log de acesso para conexão {con_codigo}")
-                messagebox.showwarning("Aviso", "Não foi possível registrar o log detalhado da conexão.")
-                # Continua a execução mesmo sem log (não bloqueia o usuário)
-
-            # Executa a conexão (rdp.exe, mstsc, etc.)
-            # Esta função é bloqueante (espera o processo RDP fechar)
+            # ⚡ Executa a conexão (rdp.exe com Popen - NÃO bloqueante no início)
+            # Esta função agora retorna rapidamente após iniciar o processo
             connection_executed = True
             connection_func(*args)
+            
+            # ⚡ VALIDAÇÃO PÓS-CONEXÃO: Verifica se processo RDP foi realmente criado
+            # Aguarda até 5.5 segundos para processo aparecer (10 tentativas × 0.5s)
+            logging.info(f"[VALIDATION] Validando criação do processo RDP para {data.get('ip', 'N/A')}")
+            
+            server_ip = data.get("ip", "").split(":")[0]
+            rdp_user = data.get("user", "")
+            connection_title = data.get("title", "")
+            
+            max_validation_attempts = 11  # 11 tentativas × 0.5s = 5.5 segundos
+            validation_interval = 0.5
+            process_found = False
+            
+            for attempt in range(max_validation_attempts):
+                if is_rdp_connection_active(server_ip, rdp_user, connection_title):
+                    process_found = True
+                    logging.info(
+                        f"[VALIDATION] ✓ Processo RDP confirmado em {attempt * validation_interval:.1f}s "
+                        f"para {server_ip}"
+                    )
+                    
+                    # ⚡ GRAVAÇÃO: Inicia APENAS após confirmar que processo RDP existe
+                    if recording_session_id and recording_connection_info and self.recording_manager:
+                        def start_recording_async():
+                            try:
+                                if self.recording_manager.start_session_recording(
+                                    recording_session_id, recording_connection_info
+                                ):
+                                    logging.info(
+                                        f"[RECORDING] ✓ Gravação iniciada (session_id={recording_session_id}) "
+                                        f"para {data.get('ip')} após validação do processo"
+                                    )
+                                else:
+                                    logging.warning(
+                                        f"[RECORDING] ❌ Falha ao iniciar gravação para {data.get('ip')}"
+                                    )
+                            except Exception as e:
+                                logging.error(f"[RECORDING] Erro ao iniciar gravação: {e}")
+                        
+                        # Inicia gravação em thread separada (não bloqueia)
+                        Thread(target=start_recording_async, daemon=True, name="StartRecording").start()
+                    
+                    break
+                
+                if attempt < max_validation_attempts - 1:  # Não aguarda na última tentativa
+                    import time
+                    time.sleep(validation_interval)
+            
+            # Se processo não foi encontrado, REMOVE da UI e limpa
+            if not process_found:
+                logging.error(
+                    f"[VALIDATION] ❌ PROCESSO RDP NÃO CRIADO após {max_validation_attempts * validation_interval}s! "
+                    f"Removendo {username} da UI (con_codigo={con_codigo})"
+                )
+                
+                # Para heartbeat imediatamente
+                stop_event.set()
+                if con_codigo in self.active_heartbeats:
+                    del self.active_heartbeats[con_codigo]
+                
+                # Remove da UI
+                def rollback_ui_no_process():
+                    try:
+                        current_users = self.tree.item(selected_item_id, "values")[7]
+                        if current_users:
+                            users_list = [u for u in current_users.split("|") if u != username]
+                            new_users = "|".join(users_list)
+                            self._update_username_cell(selected_item_id, new_users)
+                            logging.info(f"[VALIDATION] ✓ Usuário {username} removido da UI")
+                    except Exception as e:
+                        logging.error(f"[VALIDATION] Erro ao remover usuário da UI: {e}")
+                
+                self.after(0, rollback_ui_no_process)
+                
+                # Remove do banco
+                if db_success.get('connection_log'):
+                    def remove_from_db():
+                        try:
+                            self.db.logs.delete_connection_log(con_codigo, username)
+                            logging.info(f"[VALIDATION] ✓ Registro removido do banco")
+                        except Exception as e:
+                            logging.error(f"[VALIDATION] Erro ao remover do banco: {e}")
+                    Thread(target=remove_from_db, daemon=True).start()
+                
+                return  # Não continua se processo não foi criado
 
         except Exception as e:
             # CORREÇÃO: Captura exceções durante a conexão
-            logging.error(f"Erro durante execução da conexão {con_codigo}: {e}", exc_info=True)
-            # Finaliza log mesmo em caso de erro
-            if log_id:
-                try:
-                    self.db.logs.log_access_end(log_id)
-                    logging.info(f"Log de acesso {log_id} finalizado após erro")
-                except Exception as log_error:
-                    logging.error(f"Erro ao finalizar log após exceção: {log_error}")
+            logging.error(f"[PERF] Erro durante execução da conexão {con_codigo}: {e}", exc_info=True)
+            # Finaliza log mesmo em caso de erro (em thread para não bloquear)
+            def finalize_log_on_error():
+                if db_success.get('access_log'):
+                    try:
+                        self.db.logs.log_access_end(db_success['access_log'])
+                        logging.info(f"[PERF] Log de acesso {db_success['access_log']} finalizado após erro")
+                    except Exception as log_error:
+                        logging.error(f"[PERF] Erro ao finalizar log após exceção: {log_error}")
+            Thread(target=finalize_log_on_error, daemon=True).start()
             raise  # Re-raise a exceção para não suprimir erros
             
         finally:
             # Esta seção 'finally' é executada assim que 'connection_func' termina
-            logging.info(f"Conexão {con_codigo} fechada pelo usuário {username}.")
+            logging.info(f"[DISCONNECT] === INICIANDO LIMPEZA DA CONEXÃO {con_codigo} ===")
+            logging.info(f"[DISCONNECT] Conexão {con_codigo} fechada pelo usuário {username}")
 
-            # CORREÇÃO: Finaliza o log de acesso detalhado com validação
-            if log_id and connection_executed:
-                try:
-                    if self.db.logs.log_access_end(log_id):
-                        logging.info(f"✅ Log de acesso {log_id} finalizado com sucesso")
-                    else:
-                        logging.warning(f"⚠️ Falha ao finalizar log de acesso {log_id} (registro não encontrado)")
-                except Exception as e:
-                    logging.error(f"❌ Erro ao finalizar log de acesso {log_id}: {e}")
+            # OTIMIZAÇÃO: Finaliza log em thread assíncrona (não bloqueia)
+            def finalize_access_log():
+                if db_success.get('access_log') and connection_executed:
+                    try:
+                        if self.db.logs.log_access_end(db_success['access_log']):
+                            logging.info(f"[DISCONNECT] ✅ Log de acesso {db_success['access_log']} finalizado")
+                        else:
+                            logging.warning(f"[DISCONNECT] ⚠️ Log {db_success['access_log']} não encontrado")
+                    except Exception as e:
+                        logging.error(f"[DISCONNECT] ❌ Erro ao finalizar log: {e}")
+            Thread(target=finalize_access_log, daemon=True).start()
 
             # CORREÇÃO: Para o heartbeat ANTES de remover do banco para evitar race condition
             # Se não parar primeiro, o heartbeat pode tentar atualizar enquanto estamos deletando
@@ -1402,30 +1530,58 @@ class Application(ctk.CTk):
             
             # Aguarda um breve momento para garantir que o heartbeat parou
             import time
-            time.sleep(0.1)
+            time.sleep(0.05)  # Delay mínimo para garantir parada do heartbeat
             
             if con_codigo in self.active_heartbeats:
                 del self.active_heartbeats[con_codigo]
-                logging.info(f"[DISCONNECT] Heartbeat removido de active_heartbeats")
+                logging.info(f"[DISCONNECT] ✓ Heartbeat removido de active_heartbeats")
 
             # Deleta o log de conexão ativa usando usuário WATS
             logging.info(f"[DISCONNECT] Removendo registro do banco para usuário {self.user_session_name}")
-            if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
-                logging.info(f"[DISCONNECT] Registro removido com sucesso do banco")
-                try:
-                    if self.tree.exists(selected_item_id):
-                        current_users = self.tree.item(selected_item_id, "values")[7]
-                        if current_users:
-                            users_list = [u for u in current_users.split("|") if u != username]
-                            new_users = "|".join(users_list)
-                            self._update_username_cell(selected_item_id, new_users)
-                            logging.info(f"[DISCONNECT] UI atualizada, usuário removido da lista")
-                except (IndexError, Exception) as e:
-                    logging.warning(f"Erro ao limpar UI após desconexão: {e}")
-                    self.after(0, self._populate_tree)
-            else:
-                logging.error(f"Falha ao deletar log de {con_codigo}. Forçando refresh.")
+            db_removed = False
+            try:
+                db_removed = self.db.logs.delete_connection_log(con_codigo, self.user_session_name)
+                if db_removed:
+                    logging.info(f"[DISCONNECT] ✓ Registro removido com sucesso do banco")
+                else:
+                    logging.warning(f"[DISCONNECT] ⚠ Registro não encontrado no banco (pode já ter sido removido pelo heartbeat)")
+            except Exception as e:
+                logging.error(f"[DISCONNECT] ❌ Erro ao remover registro do banco: {e}")
+            
+            # CORREÇÃO: SEMPRE limpa a UI, independente do resultado do banco
+            # Isso garante que mesmo se o heartbeat já limpou o banco, a UI será atualizada
+            logging.info(f"[DISCONNECT] Limpando UI para usuário {username}")
+            try:
+                def cleanup_ui_task():
+                    try:
+                        if self.tree.exists(selected_item_id):
+                            current_users = self.tree.item(selected_item_id, "values")[7]
+                            if current_users:
+                                users_list = [u for u in current_users.split("|") if u != username]
+                                new_users = "|".join(users_list)
+                                
+                                # Atualiza a célula diretamente (sem chamar _update_username_cell que usa self.after)
+                                current_values = list(self.tree.item(selected_item_id, "values"))
+                                if len(current_values) > 7:
+                                    current_values[7] = new_users
+                                    self.tree.item(selected_item_id, values=tuple(current_values))
+                                    logging.info(f"[DISCONNECT] ✓ UI atualizada, usuário {username} removido da lista")
+                        else:
+                            logging.warning(f"[DISCONNECT] ⚠ Item {selected_item_id} não existe mais na árvore")
+                    except (IndexError, Exception) as e:
+                        logging.error(f"[DISCONNECT] ❌ Erro ao limpar UI: {e}")
+                        # Em caso de erro, força refresh completo
+                        self._populate_tree()
+                
+                # Executa na thread principal da UI
+                self.after(0, cleanup_ui_task)
+                
+            except Exception as e:
+                logging.error(f"[DISCONNECT] ❌ Erro crítico ao agendar limpeza da UI: {e}")
+                # Última tentativa: força refresh completo
                 self.after(0, self._populate_tree)
+            
+            logging.info(f"[DISCONNECT] === LIMPEZA DA CONEXÃO {con_codigo} CONCLUÍDA ===")
 
     def _connect_rdp(self, data: Dict[str, Any]):
         """Conecta usando o executável rdp.exe customizado."""
@@ -1487,8 +1643,10 @@ class Application(ctk.CTk):
                 )
                 return
 
-        # Start recording if enabled
+        # ⚡ OTIMIZAÇÃO: Prepara gravação mas NÃO inicia ainda
+        # Gravação só será iniciada APÓS validar que processo RDP foi criado
         session_id = None
+        connection_info = None
         if (
             self.recording_manager
             and self.settings.RECORDING_ENABLED
@@ -1509,13 +1667,19 @@ class Application(ctk.CTk):
                 "wats_user_ip": self.user_ip,
                 "session_timestamp": int(time.time()),
             }
+            logging.info(f"[RECORDING] Gravação preparada (session_id={session_id}) - aguardando validação do processo RDP")
 
-            if self.recording_manager.start_session_recording(session_id, connection_info):
-                logging.info(f"Recording started for RDP connection to {data.get('ip')}")
-            else:
-                logging.warning(f"Failed to start recording for RDP connection to {data.get('ip')}")
+        # CORREÇÃO: Captura a seleção atual e informações necessárias ANTES de chamar _execute_connection
+        # Isso permite que a função task() tenha acesso a essas variáveis
+        selection = self.tree.selection()
+        selected_item_id = selection[0] if selection else None
+        con_codigo = int(data.get("db_id"))
+        username = self.user_session_name
 
         def task():
+            """⚡ OTIMIZADO: Inicia RDP com Popen (não bloqueante) e monitora em thread separada."""
+            import time
+            
             # Carrega configuração do monitor e RDP
             app_config = get_app_config()
             monitor = app_config.get("monitor", 1)
@@ -1548,45 +1712,101 @@ class Application(ctk.CTk):
             icon_path = os.path.join(ASSETS_DIR, "ats.ico")
             if os.path.exists(icon_path):
                 cmd.append(f"/icon:{icon_path}")
+            
             try:
                 # Don't log the raw password. Create a masked copy for logging.
                 masked_cmd = [c if not c.startswith("/p:") else "/p:***" for c in cmd]
-                logging.info(f"Executando RDP: {' '.join(masked_cmd)}")
+                logging.info(f"[PERF] Executando RDP: {' '.join(masked_cmd)}")
 
-                # Capture output to show a helpful error message on failure.
-                proc = subprocess.run(cmd, capture_output=True, text=True)
+                # ⚡ OTIMIZAÇÃO: subprocess.Popen ao invés de subprocess.run
+                # Retorna IMEDIATAMENTE sem bloquear
+                start_time = time.time()
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                )
+                logging.info(f"[PERF] ✓ Processo RDP iniciado em {(time.time() - start_time)*1000:.1f}ms (PID: {proc.pid})")
                 
-                # Registra a conexão no monitor se foi bem-sucedida
-                if proc.returncode == 0:
+                # Thread para monitorar processo RDP e registrar quando detectado
+                def monitor_rdp_process():
+                    """Monitora processo RDP até ser detectado ou falhar."""
                     try:
+                        # Aguarda processo estabilizar
+                        time.sleep(0.3)
+                        
+                        # Tenta detectar processo RDP
                         rdp_monitor = get_rdp_monitor()
-                        pid = rdp_monitor.register_rdp_connection(
-                            data['ip'].split(':')[0],  # Remove porta se houver
-                            data['user'],
-                            data['title']
-                        )
-                        if pid:
-                            logging.info(f"[RDP_MONITOR] Conexão RDP registrada com PID {pid}")
-                        else:
-                            logging.warning(f"[RDP_MONITOR] Não foi possível registrar conexão RDP")
+                        max_attempts = 8
+                        rdp_detected = False
+                        
+                        for attempt in range(max_attempts):
+                            # Verifica se processo ainda está rodando
+                            if proc.poll() is not None:
+                                # Processo terminou prematuramente
+                                stdout, stderr = proc.communicate()
+                                logging.error(
+                                    f"[PERF] ❌ Processo RDP terminou prematuramente (exit {proc.returncode})\n"
+                                    f"stdout: {stdout}\nstderr: {stderr}"
+                                )
+                                # Remove da UI
+                                def remove_from_ui():
+                                    try:
+                                        current_users = self.tree.item(selected_item_id, "values")[7]
+                                        if current_users:
+                                            users_list = [u for u in current_users.split("|") if u != username]
+                                            new_users = "|".join(users_list)
+                                            self._update_username_cell(selected_item_id, new_users)
+                                    except Exception:
+                                        pass
+                                self.after(0, remove_from_ui)
+                                
+                                # Mostra erro ao usuário
+                                err_msg = stderr.strip() or stdout.strip() or f"Exit code {proc.returncode}"
+                                if len(err_msg) > 500:
+                                    err_msg = err_msg[:500] + "..."
+                                self.after(0, lambda: messagebox.showerror(
+                                    "Erro RDP", f"Falha ao conectar:\n{err_msg}"
+                                ))
+                                return
+                            
+                            # Tenta detectar processo
+                            if is_rdp_connection_active(
+                                data['ip'].split(':')[0],
+                                data['user'],
+                                data['title']
+                            ):
+                                rdp_detected = True
+                                logging.info(f"[PERF] ✓ Processo RDP detectado na tentativa {attempt + 1}")
+                                
+                                # Registra conexão
+                                pid = rdp_monitor.register_rdp_connection(
+                                    data['ip'].split(':')[0],
+                                    data['user'],
+                                    data['title']
+                                )
+                                if pid:
+                                    logging.info(f"[PERF] ✓ Conexão RDP registrada com PID {pid}")
+                                break
+                            
+                            if attempt < max_attempts - 1:
+                                time.sleep(0.4)
+                        
+                        if not rdp_detected:
+                            logging.warning(f"[PERF] ⚠ Processo RDP não detectado após {max_attempts} tentativas")
+                    
                     except Exception as e:
-                        logging.error(f"[RDP_MONITOR] Erro ao registrar conexão: {e}")
+                        logging.error(f"[PERF] Erro ao monitorar processo RDP: {e}")
                 
-                if proc.returncode != 0:
-                    # Log full output (server logs may contain useful info)
-                    logging.error(
-                        f"rdp.exe exit {proc.returncode}. stdout: {proc.stdout}; stderr: {proc.stderr}"
-                    )
-                    # Show a user-friendly error (truncate to avoid huge dialogs)
-                    err_msg = (
-                        proc.stderr.strip() or proc.stdout.strip() or f"Exit code {proc.returncode}"
-                    )
-                    if len(err_msg) > 1000:
-                        err_msg = err_msg[:1000] + "... (truncated)"
-                    messagebox.showerror(
-                        "Erro", f"Falha ao executar o rdp.exe:\n{err_msg}\n\n(Código de saída: {proc.returncode})", )
-                else:
-                    logging.info(f"RDP connection completed successfully for {data.get('ip')}")
+                # Inicia monitoramento em thread separada
+                Thread(target=monitor_rdp_process, daemon=True, name=f"RDP-Monitor-{con_codigo}").start()
+                
+                # ⚡ AGUARDA processo terminar (usuário desconectar)
+                # Mas o controle já foi retornado imediatamente após Popen
+                proc.wait()
+                logging.info(f"[PERF] Processo RDP finalizado (exit code: {proc.returncode})")
 
             except FileNotFoundError as e:
                 logging.error(f"rdp.exe não encontrado: {e}")
@@ -1602,7 +1822,13 @@ class Application(ctk.CTk):
                     else:
                         logging.warning(f"Failed to stop recording for session {session_id}")
 
-        self._execute_connection(data, task)
+        # Passa session_id e connection_info como parâmetros nomeados
+        self._execute_connection(
+            data, 
+            task, 
+            recording_session_id=session_id, 
+            recording_connection_info=connection_info
+        )
 
     def _connect_native_wts(self):
         """Conecta usando o cliente MSTSC."""
@@ -2508,3 +2734,134 @@ class Application(ctk.CTk):
         
         # Executa em background, sem bloquear UI
         self.thread_pool.submit_io_task(cleanup_task)
+
+    def _cleanup_orphaned_connections(self):
+        """
+        ⚡ OTIMIZADO: Remove conexões órfãs do banco (SOMENTE DO USUÁRIO DA MÁQUINA ATUAL).
+        
+        Casos tratados:
+        1. WATS foi fechado enquanto conectado (heartbeat parou, processo RDP ainda ativo)
+        2. Processo RDP foi morto externamente
+        3. Registros antigos que não foram limpos corretamente
+        
+        Esta função é executada:
+        - A cada refresh da árvore (~30s)
+        - Em thread separada (não bloqueia UI)
+        """
+        try:
+            logging.info(f"[CLEANUP_ORPHAN] 🔍 Iniciando limpeza para: {self.user_session_name}")
+            
+            # ⚡ OTIMIZAÇÃO: Busca APENAS conexões do usuário atual (query filtrada no banco)
+            user_connections = self.db.logs.get_active_connections_for_user(self.user_session_name)
+            
+            logging.info(f"[CLEANUP_ORPHAN] Conexões do usuário encontradas: {len(user_connections) if user_connections else 0}")
+            
+            if not user_connections:
+                logging.debug(f"[CLEANUP_ORPHAN] Nenhuma conexão do usuário no banco")
+                return
+            
+            orphaned_count = 0
+            
+            for conn in user_connections:
+                con_codigo = conn.get('Con_Codigo')
+                
+                # Pula se tiver heartbeat ativo (conexão válida e gerenciada)
+                if con_codigo in self.active_heartbeats:
+                    logging.debug(f"[CLEANUP_ORPHAN] Con {con_codigo} - heartbeat ativo, OK")
+                    continue
+                
+                logging.info(f"[CLEANUP_ORPHAN] ⚠️ Con {con_codigo} SEM heartbeat - validando processo RDP...")
+                
+                # Tenta obter IP da conexão do cache
+                server_ip = None
+                connection_title = None
+                rdp_user = None
+                
+                try:
+                    conn_data = next((c for c in self.data_cache if c.con_codigo == con_codigo), None)
+                    if conn_data:
+                        server_ip = conn_data.ip.split(':')[0] if conn_data.ip else None
+                        connection_title = conn_data.nome
+                        rdp_user = conn_data.user
+                except Exception as e:
+                    logging.debug(f"[CLEANUP_ORPHAN] Erro ao buscar cache para {con_codigo}: {e}")
+                
+                # Fallback: busca direto do banco
+                if not server_ip:
+                    try:
+                        query = f"SELECT Con_IP FROM Conexao WHERE Con_Codigo = {self.db.PARAM}"
+                        with self.db.get_cursor() as cursor:
+                            cursor.execute(query, (con_codigo,))
+                            row = cursor.fetchone()
+                            if row:
+                                server_ip = row[0].split(':')[0] if row[0] else None
+                    except Exception as e:
+                        logging.debug(f"[CLEANUP_ORPHAN] Erro ao buscar IP do banco: {e}")
+                
+                # Se não tem IP, remove sem validar processo (dados insuficientes)
+                if not server_ip:
+                    logging.warning(
+                        f"[CLEANUP_ORPHAN] ⚠️ Con {con_codigo} sem IP - "
+                        f"REMOVENDO órfã sem validação de processo"
+                    )
+                    if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
+                        orphaned_count += 1
+                        self._remove_user_from_ui(con_codigo, self.user_session_name)
+                    continue
+                
+                # Verifica se processo RDP existe
+                logging.info(f"[CLEANUP_ORPHAN] Validando RDP: IP={server_ip}, user={rdp_user}")
+                is_active = is_rdp_connection_active(server_ip, rdp_user, connection_title)
+                
+                if not is_active:
+                    logging.warning(f"[CLEANUP_ORPHAN] 🧟 Órfã detectada: Con {con_codigo} @ {server_ip}")
+                    
+                    # Remove do banco
+                    if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
+                        orphaned_count += 1
+                        logging.info(f"[CLEANUP_ORPHAN] ✓ Removida do banco: Con {con_codigo}")
+                        
+                        # Remove da UI (método separado para evitar race conditions)
+                        self._remove_user_from_ui(con_codigo, self.user_session_name)
+                else:
+                    logging.info(f"[CLEANUP_ORPHAN] ✓ Processo RDP ativo para Con {con_codigo} - mantendo")
+            
+            if orphaned_count > 0:
+                logging.info(f"[CLEANUP_ORPHAN] 🧟 Total removido: {orphaned_count} conexão(ões)")
+                
+        except Exception as e:
+            logging.error(f"[CLEANUP_ORPHAN] Erro: {e}", exc_info=True)
+
+    def _remove_user_from_ui(self, con_codigo: int, username: str):
+        """
+        Remove usuário da UI de forma segura (evita race conditions).
+        Executa na thread principal com validações.
+        """
+        def update_ui():
+            try:
+                item_id = self.tree_item_map.get(con_codigo)
+                if not item_id or not self.tree.exists(item_id):
+                    logging.debug(f"[UI_UPDATE] Item {con_codigo} não existe na árvore")
+                    return
+                
+                current_users = self.tree.item(item_id, "values")[7]
+                if not current_users or username not in current_users:
+                    logging.debug(f"[UI_UPDATE] Usuário {username} já removido da UI")
+                    return
+                
+                # Remove usuário da lista
+                users_list = [u for u in current_users.split("|") if u != username]
+                new_users = "|".join(users_list)
+                
+                # Atualiza UI
+                current_values = list(self.tree.item(item_id, "values"))
+                current_values[7] = new_users
+                self.tree.item(item_id, values=tuple(current_values))
+                
+                logging.info(f"[UI_UPDATE] ✓ Removido {username} da UI (Con {con_codigo})")
+                
+            except Exception as e:
+                logging.error(f"[UI_UPDATE] Erro ao atualizar UI: {e}")
+        
+        # Garante execução na thread principal
+        self.after(0, update_ui)

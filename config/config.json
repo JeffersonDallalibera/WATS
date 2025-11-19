@@ -61,7 +61,7 @@
     "max_file_age_days": 30
   },
   "application": {
-    "log_level": "INFO",
+    "log_level": "WARNING",
     "theme": "Dark",
     "auto_consent": true,
     "window_title": "WATS",

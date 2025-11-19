@@ -293,6 +293,29 @@ class LogRepository(BaseRepository):
             logging.error(f"Erro ao buscar conexões ativas: {e}")
             return []
 
+    def get_active_connections_for_user(self, username: str) -> List[Dict[str, Any]]:
+        """
+        ⚡ OTIMIZADO: Retorna conexões ativas APENAS do usuário especificado.
+        Mais performático que get_active_connections() + filtro.
+        """
+        query = f"""
+            SELECT Con_Codigo, Usu_Nome, Usu_IP, Usu_Nome_Maquina, Usu_Usuario_Maquina,
+                   Usu_Dat_Conexao, Usu_Last_Heartbeat
+            FROM Usuario_Conexao_WTS
+            WHERE Usu_Nome = {self.db.PARAM}
+            ORDER BY Usu_Dat_Conexao DESC
+        """
+        try:
+            with self.db.get_cursor() as cursor:
+                if not cursor:
+                    raise DatabaseConnectionError("Falha ao obter cursor.")
+                cursor.execute(query, (username,))
+                columns = [desc[0] for desc in cursor.description]
+                return [dict(zip(columns, row)) for row in cursor.fetchall()]
+        except self.driver_module.Error as e:
+            logging.error(f"Erro ao buscar conexões ativas do usuário {username}: {e}")
+            return []
+
     @cached(namespace="logs", ttl=300)
     def get_access_logs(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Retorna logs de acesso com paginação (cache de 5min)."""
