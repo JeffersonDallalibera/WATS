@@ -54,6 +54,27 @@ class WindowTracker:
         self.connection_info = connection_info
         self.update_interval = update_interval
 
+        # Políticas de captura
+        # Quando true, a gravação NÃO deve ocorrer se a janela estiver coberta
+        # (permite que overlays apareçam para o usuário, porém não sejam gravados)
+        self.pause_on_covered: bool = bool(
+            connection_info.get("pause_on_covered", True)
+        )
+        # Quando true, usa a área cliente da janela (sem bordas/barra de título)
+        # para reduzir risco de capturar elementos externos.
+        self.capture_client_area: bool = bool(
+            connection_info.get("capture_client_area", True)
+        )
+        # Quando true, permite que outras janelas sobreponham a janela RDP (não fixa como topmost)
+        self.allow_window_override: bool = bool(
+            connection_info.get("allow_window_override", True)
+        )
+        # Percentual mínimo de sobreposição da área de captura para considerar "coberta"
+        # Usado em conjunto com a área cliente para evitar capturar overlays.
+        self.covered_overlap_threshold: float = float(
+            connection_info.get("covered_overlap_threshold", 0.0)
+        )
+
         # Estado atual da janela
         self.current_window: Optional[WindowInfo] = None
         self.target_hwnd: Optional[int] = None
@@ -135,23 +156,40 @@ class WindowTracker:
             logging.debug("❌ Não adequada: current_window é None")
             return False
 
-        # Estados adequados agora incluem COVERED se a janela for visível
-        suitable_states = [WindowState.NORMAL, WindowState.MAXIMIZED, WindowState.COVERED]
-        is_suitable = self.current_window.state in suitable_states
+        # Estados base que podem ser gravados
+        base_states = [WindowState.NORMAL, WindowState.MAXIMIZED]
+        is_suitable = self.current_window.state in base_states
 
-        # Para janelas COVERED, verifica se ainda é visível
+        # Se outra janela está em primeiro plano e política de pausa está ativa,
+        # considerar como não adequado imediatamente (não gravar nada sobreposto).
+        try:
+            if self.pause_on_covered:
+                fg = win32gui.GetForegroundWindow()
+                if fg and fg != self.current_window.hwnd:
+                    logging.debug("   Foreground diferente do alvo e pause_on_covered=True -> não gravar")
+                    return False
+        except Exception as e:
+            logging.debug(f"   Erro verificando foreground: {e}")
+
+        # Caso a janela esteja coberta
         if self.current_window.state == WindowState.COVERED:
             try:
                 is_visible = win32gui.IsWindowVisible(self.current_window.hwnd)
                 logging.debug(f"   Janela COVERED - visível: {is_visible}")
-                is_suitable = is_visible
+                # Se política pause_on_covered estiver ativa, NÃO gravar quando coberta
+                if self.pause_on_covered:
+                    logging.debug("   Política pause_on_covered=True -> não gravar quando coberta")
+                    is_suitable = False
+                else:
+                    # Se política desativada, permite gravar se ainda for visível
+                    is_suitable = is_visible
             except Exception as e:
                 logging.debug(f"   Erro verificando visibilidade: {e}")
                 is_suitable = False
 
         logging.debug("🔍 VERIFICANDO ADEQUAÇÃO DA JANELA:")
         logging.debug(f"   Estado atual: {self.current_window.state.value}")
-        logging.debug(f"   Estados adequados: {[s.value for s in suitable_states]}")
+        logging.debug(f"   Estados base adequados: {[s.value for s in base_states]}")
         logging.debug(f"   É adequada: {is_suitable}")
         logging.debug(f"   Título: {self.current_window.title}")
         logging.debug(f"   HWND: {self.current_window.hwnd}")
@@ -179,7 +217,13 @@ class WindowTracker:
             logging.debug("   ❌ Janela não adequada para gravação")
             return None
 
-        left, top, right, bottom = self.current_window.rect
+        # Usa área cliente quando configurado
+        rect_tuple = self._get_capture_rect()
+        if not rect_tuple:
+            logging.debug("   ❌ Falha ao obter área de captura")
+            return None
+
+        left, top, right, bottom = rect_tuple
         rect = {"left": left, "top": top, "width": right - left, "height": bottom - top}
 
         logging.debug(f"   ✅ Área de gravação: {rect}")
@@ -494,20 +538,25 @@ class WindowTracker:
                 logging.debug("   _is_window_covered: janela em primeiro plano")
                 return False
 
-            # Verifica se a janela em primeiro plano realmente sobrepõe nossa janela
+            # Verifica se a janela em primeiro plano realmente sobrepõe a ÁREA DE CAPTURA (cliente)
             try:
-                our_rect = win32gui.GetWindowRect(self.target_hwnd)
+                # Use a área de captura (cliente) para calcular sobreposição
+                capture_rect = self._get_capture_rect()
+                if not capture_rect:
+                    capture_rect = win32gui.GetWindowRect(self.target_hwnd)
+                our_rect = capture_rect
                 fg_rect = win32gui.GetWindowRect(foreground_hwnd)
 
-                # Verifica se há sobreposição significativa (mais de 50% da área)
                 overlap_area = self._calculate_overlap_area(our_rect, fg_rect)
                 our_area = (our_rect[2] - our_rect[0]) * (our_rect[3] - our_rect[1])
 
                 if our_area > 0:
                     overlap_percentage = overlap_area / our_area
-                    logging.debug(f"   _is_window_covered: sobreposição {overlap_percentage:.2%}")
-                    # Considera coberta se mais de 70% está sobreposta
-                    return overlap_percentage > 0.7
+                    logging.debug(
+                        f"   _is_window_covered: sobreposição na área de captura {overlap_percentage:.2%} (threshold={self.covered_overlap_threshold:.2f})"
+                    )
+                    # Considera coberta se exceder o limiar configurado (default 0%)
+                    return overlap_percentage > self.covered_overlap_threshold
                 else:
                     return True
 
@@ -536,6 +585,47 @@ class WindowTracker:
             return 0
 
         return (right - left) * (bottom - top)
+
+    def _get_capture_rect(self) -> Optional[Tuple[int, int, int, int]]:
+        """Obtém o retângulo de captura da janela.
+
+        Quando `capture_client_area` está habilitado, usa a área cliente (sem bordas
+        e barra de título), mapeada para coordenadas de tela.
+        """
+        try:
+            if not self.current_window:
+                return None
+
+            if not self.capture_client_area:
+                return self.current_window.rect
+
+            # Converte área cliente para coordenadas de tela
+            # GetClientRect retorna coordenadas relativas à janela (0,0)-(w,h).
+            import win32con
+            hwnd = self.current_window.hwnd
+            client_left_top = (0, 0)
+
+            client_rect = win32gui.GetClientRect(hwnd)
+            # MapWindowPoints: mapeia pontos da janela para tela
+            # Precisamos do topo-esquerdo (0,0) e do bottom-right (w,h)
+            pts = win32gui.MapWindowPoints(hwnd, 0, (client_left_top, (client_rect[2], client_rect[3])))
+            left = pts[0][0]
+            top = pts[0][1]
+            right = pts[1][0]
+            bottom = pts[1][1]
+
+            # Sanidade: se algo falhar, retorna rect completo
+            if left >= right or top >= bottom:
+                logging.debug("   _get_capture_rect: área cliente inválida, usando rect da janela")
+                return self.current_window.rect
+
+            logging.debug(
+                f"   _get_capture_rect: usando área cliente {left, top, right, bottom} (client={client_rect})"
+            )
+            return (left, top, right, bottom)
+        except Exception as e:
+            logging.debug(f"   _get_capture_rect: falha ao obter área cliente: {e}")
+            return self.current_window.rect if self.current_window else None
 
     def _bring_window_to_front(self, hwnd: int) -> bool:
         """
@@ -574,13 +664,19 @@ class WindowTracker:
             except Exception as e:
                 logging.debug(f"   BringWindowToTop falhou: {e}")
 
-            # Método 3: SetWindowPos (sempre no topo)
+            # Método 3: SetWindowPos controlando topmost conforme allow_window_override
+            # - Se allow_window_override=True, NÃO usa HWND_TOPMOST (-1); usa HWND_TOP (0)
+            #   permitindo que Alt+Tab e outras janelas apareçam por cima.
+            # - Se allow_window_override=False, usa HWND_TOPMOST para manter sempre à frente.
             try:
+                insert_after = -1 if not self.allow_window_override else 0  # -1=HWND_TOPMOST, 0=HWND_TOP
                 win32gui.SetWindowPos(
-                    hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002
+                    hwnd, insert_after, 0, 0, 0, 0, 0x0001 | 0x0002
                 )  # SWP_NOSIZE | SWP_NOMOVE
                 success = True
-                logging.debug("   SetWindowPos: sucesso")
+                logging.debug(
+                    f"   SetWindowPos: sucesso (allow_window_override={self.allow_window_override}, insert_after={insert_after})"
+                )
             except Exception as e:
                 logging.debug(f"   SetWindowPos falhou: {e}")
 
