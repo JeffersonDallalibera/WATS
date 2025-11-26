@@ -785,9 +785,24 @@ class Application(ctk.CTk):
             new_data_list: Lista de ConnectionData atualizada
         """
         try:
-            # Converte para objetos e cria mapa/set para lookup rápido
+            # Aplica o filtro atual à lista nova para que o refresh
+            # respeite o que está sendo pesquisado na UI.
+            filter_text = self.filter_var.get().lower()
+            filtered_new_data: List[ConnectionData] = [
+                conn
+                for conn in new_data_list
+                if (
+                    not filter_text
+                    or filter_text in (conn.nome or "").lower()
+                    or (conn.group_name and filter_text in conn.group_name.lower())
+                    or (conn.cliente and filter_text in conn.cliente.lower())
+                    or (conn.connected_user and filter_text in conn.connected_user.lower())
+                )
+            ]
+
+            # Cria mapa/set com BASE APENAS NOS DADOS FILTRADOS (visíveis)
             new_data_map: Dict[int, ConnectionData] = {
-                conn.con_codigo: conn for conn in new_data_list
+                conn.con_codigo: conn for conn in filtered_new_data
             }
             new_ids: Set[int] = set(new_data_map.keys())
 
@@ -899,7 +914,7 @@ class Application(ctk.CTk):
                                 current_parent_iid
                             )  # Marca grupo antigo para ver se ficou vazio
 
-            # Adiciona novos itens (os de ids_to_add)
+            # Adiciona novos itens (apenas os que passam no filtro)
             for con_codigo in ids_to_add:
                 conn_data = new_data_map[con_codigo]
                 parent_iid = ""
@@ -952,7 +967,9 @@ class Application(ctk.CTk):
                     del self.group_item_map[group_name]
 
             # --- 7. Finalização ---
-            self.data_cache = new_data_list  # Atualiza o cache principal
+            # Atualiza o cache principal com TODOS os dados (sem filtro),
+            # mas mantém a Treeview consistente com o filtro atual.
+            self.data_cache = new_data_list
 
         except Exception as e:
             logging.error(f"Erro inesperado durante atualização diferencial: {e}", exc_info=True)
@@ -961,9 +978,8 @@ class Application(ctk.CTk):
                 "Erro Interno",
                 f"Ocorreu um erro ao atualizar a lista:\n{e}\n\nA lista será recarregada completamente.",
             )
-            self._rebuild_tree_from_cache(
-                self.filter_var.get().lower()
-            )  # Tenta reconstruir com filtro atual
+            # Reconstrói com o filtro atual para manter a experiência do usuário
+            self._rebuild_tree_from_cache(self.filter_var.get().lower())
         finally:
             self._show_loading_message(False)  # Esconde "Carregando..."
 

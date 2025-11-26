@@ -354,8 +354,26 @@ class SmartSessionRecorder:
                 height, width = frame.shape[:2]
                 new_width = int(width * self.resolution_scale)
                 new_height = int(height * self.resolution_scale)
+                # Garante dimensões pares para compatibilidade com codecs (ex.: H.264)
+                if new_width % 2 != 0:
+                    new_width -= 1
+                if new_height % 2 != 0:
+                    new_height -= 1
                 frame = cv2.resize(frame, (new_width, new_height))
                 logging.debug(f"📏 Frame redimensionado para: {frame.shape}")
+
+            # Detecta mudança de resolução (p.ex. mover para outro monitor)
+            try:
+                expected_w, expected_h = getattr(self, "_writer_size", (None, None))
+                fh, fw = frame.shape[0], frame.shape[1]
+                if expected_w is not None and expected_h is not None and (fw != expected_w or fh != expected_h):
+                    logging.warning(
+                        f"📐 Mudança de resolução detectada: writer {expected_w}x{expected_h} -> frame {fw}x{fh}. Rotacionando segmento."
+                    )
+                    self._rotate_to_new_segment("resolution_change")
+                    self._writer_size = (fw, fh)
+            except Exception as e:
+                logging.debug(f"Falha ao verificar mudança de resolução: {e}")
 
             # Escreve frame
             self.current_writer.write(frame)
@@ -457,6 +475,11 @@ class SmartSessionRecorder:
 
             width = int(recording_rect["width"] * self.resolution_scale)
             height = int(recording_rect["height"] * self.resolution_scale)
+            # Ajusta para dimensões pares, necessárias por alguns codecs
+            if width % 2 != 0:
+                width -= 1
+            if height % 2 != 0:
+                height -= 1
 
             logging.info(f"   📐 Resolução: {width}x{height} (escala: {self.resolution_scale})")
             logging.info(f"   🎞️  FPS: {self.fps}")
@@ -496,6 +519,9 @@ class SmartSessionRecorder:
                     f"❌ Failed to create video writer for {file_path} - nenhum codec funcionou"
                 )
                 return False
+
+            # Guarda resolução do writer para detectar mudanças posteriores
+            self._writer_size = (width, height)
 
             # Cria novo segmento
             self.current_segment = RecordingSegment(
