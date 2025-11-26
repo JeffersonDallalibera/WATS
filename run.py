@@ -14,8 +14,27 @@ from src.wats.config import setup_logging, load_environment_variables, Settings,
 
 
 def get_config_file_path():
-    """Retorna o caminho do arquivo config.json"""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    """
+    Retorna o caminho do arquivo config.json usando a MESMA lógica do load_config_json.
+    
+    IMPORTANTE: 
+    - Se executável (WATS.exe) → usa config.json na pasta do .exe
+    - Se script (desenvolvimento) → usa config/config.json
+    """
+    import sys
+    
+    if getattr(sys, "frozen", False):
+        # Executável: config.json na pasta do executável (dist/WATS)
+        exe_dir = os.path.dirname(sys.executable)
+        config_path = os.path.join(exe_dir, "config.json")
+        print(f"[DEBUG] Modo executável - config.json em: {config_path}")
+        return config_path
+    else:
+        # Script: config/config.json
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        config_path = os.path.join(base_dir, "config", "config.json")
+        print(f"[DEBUG] Modo script - config.json em: {config_path}")
+        return config_path
 
 
 def update_config_auto_consent(value):
@@ -40,10 +59,19 @@ def update_config_auto_consent(value):
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
         
-        logging.info(f"✓ config.json atualizado: auto_consent = {value}")
+        # Usa print ao invés de logging (pode não estar configurado ainda)
+        print(f"✓ config.json atualizado: auto_consent = {value}")
+        try:
+            logging.info(f"✓ config.json atualizado: auto_consent = {value}")
+        except:
+            pass  # Ignora se logging ainda não está configurado
         return True
     except Exception as e:
-        logging.error(f"Erro ao atualizar config.json: {e}")
+        print(f"❌ Erro ao atualizar config.json: {e}")
+        try:
+            logging.error(f"Erro ao atualizar config.json: {e}")
+        except:
+            pass
         return False
 
 
@@ -142,12 +170,18 @@ def main():
     try:
         # ⚡ auto_consent = True: usuário já aceitou antes (config.json foi atualizado)
         # ⚡ auto_consent = False: primeira vez, precisa mostrar diálogo
-        auto_consent = get_app_config().get("auto_consent", False)
+        app_config = get_app_config()
+        auto_consent = app_config.get("auto_consent", False)
+        
+        print(f"[DEBUG] app_config completo: {app_config}")
+        print(f"[DEBUG] auto_consent lido: {auto_consent}")
         
         if auto_consent:
+            print("✓ auto_consent=True no config.json - usuário já consentiu anteriormente")
             logging.info("✓ auto_consent=True no config.json - usuário já consentiu anteriormente")
             consent_given = True
         else:
+            print("📋 auto_consent=False - primeira execução, exibindo diálogo de consentimento...")
             logging.info("📋 auto_consent=False - primeira execução, exibindo diálogo de consentimento...")
             # Precisamos de uma root window temporária para o Toplevel
             temp_root = ctk.CTk()
@@ -164,8 +198,13 @@ def main():
             
             # ⚡ SALVA O CONSENTIMENTO: Atualiza config.json para não perguntar novamente
             if consent_given:
-                update_config_auto_consent(True)
-                logging.info("✓ Consentimento aceito e salvo no config.json (auto_consent=True)")
+                print("💾 Salvando consentimento no config.json...")
+                if update_config_auto_consent(True):
+                    print("✅ Consentimento salvo com sucesso!")
+                    logging.info("✓ Consentimento aceito e salvo no config.json (auto_consent=True)")
+                else:
+                    print("❌ FALHA ao salvar consentimento!")
+                    logging.error("❌ FALHA ao salvar auto_consent no config.json")
 
         if consent_given is True:
             logging.info("Consentimento de gravação ACEITO pelo usuário.")

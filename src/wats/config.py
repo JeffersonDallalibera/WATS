@@ -351,8 +351,10 @@ class Settings:
 
     def _load_recording_settings(self):
         """Carrega configurações de gravação de sessão."""
-        # Configurações booleanas
-        self.RECORDING_ENABLED = self._get_bool_config(["recording", "enabled"], "RECORDING_ENABLED", False)
+        # ⚠️ GRAVAÇÃO HABILITADA POR PADRÃO
+        # Se a tag "enabled" NÃO existir no config.json → habilita automaticamente (True)
+        # Se a tag "enabled" EXISTIR no config.json → respeita o valor configurado
+        self.RECORDING_ENABLED = self._get_bool_config(["recording", "enabled"], "RECORDING_ENABLED", True)
         self.RECORDING_AUTO_START = self._get_bool_config(["recording", "auto_start"], "RECORDING_AUTO_START", True)
         
         # Modo de gravação

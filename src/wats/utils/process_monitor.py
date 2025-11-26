@@ -163,15 +163,15 @@ class RdpProcessMonitor:
         return rdp_processes
     
     def _extract_server_from_cmdline(self, cmdline: str) -> Optional[str]:
-        """Extrai o IP/hostname do servidor da linha de comando."""
-        # Para rdp.exe: /v:192.168.1.100
-        # Para mstsc.exe: /v:192.168.1.100 ou mstsc /v:server.domain.com
+        """Extrai o IP/hostname do servidor da linha de comando (COM PORTA se houver)."""
+        # Para rdp.exe: /v:192.168.1.100:3389
+        # Para mstsc.exe: /v:192.168.1.100 ou mstsc /v:server.domain.com:3389
         match = re.search(r'/v:([^\s]+)', cmdline)
         if match:
             server = match.group(1)
-            # Remove porta se houver (ex: 192.168.1.100:3389 -> 192.168.1.100)
-            if ':' in server:
-                server = server.split(':')[0]
+            # ⚡ CORREÇÃO: MANTÉM a porta para fazer match preciso
+            # Antes: removia a porta → causava match incorreto em IPs iguais com portas diferentes
+            # Agora: mantém IP:PORTA completo
             return server
         return None
     
@@ -218,7 +218,7 @@ class RdpProcessMonitor:
             # Remove porta do server_ip se presente
             server_ip_clean = server_ip.split(':')[0] if ':' in server_ip else server_ip
             
-            logging.debug(f"[PROCESS_CHECK] Verificando RDP para {server_ip_clean} (user={user}, title={title})")
+            logging.debug(f"[PROCESS_CHECK] Verificando RDP para {server_ip_clean} (original: {server_ip}, user={user}, title={title})")
             logging.debug(f"[PROCESS_CHECK] Processos RDP ativos: {len(active_processes)}")
             
             for proc in active_processes:
@@ -229,27 +229,42 @@ class RdpProcessMonitor:
                     
                 logging.debug(f"[PROCESS_CHECK] Processo encontrado - IP: {proc.server_ip}, User: {proc.user}, Title: {proc.server_name}, PID: {proc.pid}")
                 
-                # Verifica se corresponde ao servidor (IP ou hostname)
-                # Compara tanto o valor direto quanto por título (que pode conter o nome do servidor)
-                matches_server = (
-                    proc.server_ip == server_ip_clean or
-                    proc.server_name == server_ip_clean or
-                    (title and proc.server_name == title)
-                )
+                # ⚡ CORREÇÃO: Prioriza match EXATO (IP:PORTA completo)
+                # Isso evita match incorreto quando há múltiplas conexões no mesmo IP com portas diferentes
+                # Exemplo: 177.69.134.145:33181 vs 177.69.134.145:33896
+                
+                # 1. Tenta match EXATO primeiro (IP:PORTA)
+                if proc.server_ip == server_ip:
+                    matches_server = True
+                    logging.debug(f"[PROCESS_CHECK] Match EXATO: {proc.server_ip} == {server_ip}")
+                # 2. Se não tem porta no processo, tenta match sem porta (backward compatibility)
+                elif ':' not in proc.server_ip and proc.server_ip == server_ip_clean:
+                    matches_server = True
+                    logging.debug(f"[PROCESS_CHECK] Match por IP (sem porta): {proc.server_ip} == {server_ip_clean}")
+                # 3. Match por título da conexão
+                elif title and proc.server_name == title:
+                    matches_server = True
+                    logging.debug(f"[PROCESS_CHECK] Match por TÍTULO: {proc.server_name} == {title}")
+                else:
+                    matches_server = False
                 
                 if matches_server:
                     # Verificações opcionais (mais flexíveis)
+                    # Se o processo tem usuário definido E foi passado um usuário para verificar, compara
+                    # Se o processo tem user="Unknown" (mstsc.exe), aceita qualquer usuário
                     if user and proc.user != "Unknown" and proc.user != user:
                         logging.debug(f"[PROCESS_CHECK] Usuário não corresponde: esperado '{user}', encontrado '{proc.user}'")
                         continue
                     
-                    # Verifica se não é um processo muito recente (evita falsos positivos)
+                    # Calcula uptime apenas para log
                     uptime = current_time - proc.create_time
-                    if uptime > tolerance_seconds:
-                        logging.info(f"[PROCESS_CHECK] ✓ Processo RDP ATIVO encontrado para {server_ip_clean} via {proc.server_ip} (PID {proc.pid}, uptime {int(uptime)}s)")
-                        return True
+                    
+                    # Log diferenciado para processos mstsc.exe (sem user/title)
+                    if proc.user == "Unknown":
+                        logging.info(f"[PROCESS_CHECK] ✓ Processo RDP ATIVO encontrado (mstsc.exe) para {server_ip_clean} (PID {proc.pid}, uptime {int(uptime)}s)")
                     else:
-                        logging.debug(f"[PROCESS_CHECK] Processo muito recente ({int(uptime)}s), ignorando")
+                        logging.info(f"[PROCESS_CHECK] ✓ Processo RDP ATIVO encontrado para {server_ip_clean} via {proc.server_ip} (PID {proc.pid}, uptime {int(uptime)}s)")
+                    return True
             
             logging.warning(f"[PROCESS_CHECK] ✗ Nenhum processo RDP ativo encontrado para {server_ip_clean}")
             return False
