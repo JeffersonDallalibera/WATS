@@ -185,7 +185,7 @@ class Application(ctk.CTk):
         # to improve perceived startup time. We'll create a minimal window
         # quickly and then schedule the rest.
         self.db = None  # Will be set later by background init
-        self.recording_manager = None  # Will be set later by background init
+        self.recording_manager = True  # Will be set later by background init
 
         # Lightweight initial state
         self.data_cache: List[ConnectionData] = []
@@ -390,7 +390,7 @@ class Application(ctk.CTk):
         """Configura a janela principal."""
         # Carrega configurações da aplicação
         app_config = get_app_config()
-        window_title = app_config.get("window_title", "WATS - Sistema de Gravação RDP")
+        window_title = app_config.get("window_title", "WATS")
 
         # Define o título com o nome da sessão do usuário
         self.title(f"{window_title} ({self.user_session_name})")
@@ -400,7 +400,7 @@ class Application(ctk.CTk):
         # [ALTERADO] O 'set_appearance_mode' foi movido para _load_and_apply_theme
         # Esta linha agora apenas lê o modo que já foi definido.
         initial_mode = ctk.get_appearance_mode()
-        self.initial_button_icon = "☀️" if initial_mode == "Light" else "🌙"
+        self.initial_button_icon = "☀" if initial_mode == "Light" else "🌙"
 
         icon_path = os.path.join(ASSETS_DIR, "ats.ico")
         if os.path.exists(icon_path):
@@ -462,7 +462,7 @@ class Application(ctk.CTk):
         mode = ctk.get_appearance_mode()
         new_mode = "Light" if mode == "Dark" else "Dark"
         ctk.set_appearance_mode(new_mode)
-        self.theme_button.configure(text="☀️" if new_mode == "Light" else "🌙")
+        self.theme_button.configure(text="☀" if new_mode == "Light" else "🌙")
         self._apply_treeview_theme()
         self._save_theme_preference(new_mode)
 
@@ -519,9 +519,6 @@ class Application(ctk.CTk):
             command=self._open_admin_login,
         )
         self.admin_button.grid(row=0, column=admin_column, padx=(0, 15), pady=10)
-        # --- FIM DO CABEÇALHO ---
-
-        # --- CONTAINER DA TREEVIEW (O código restante deve estar aqui) ---
         tree_container = ctk.CTkFrame(self, fg_color="transparent")
         tree_container.grid(row=1, column=0, padx=15, pady=(0, 15), sticky="nsew")
         tree_container.grid_columnconfigure(0, weight=1)
@@ -616,7 +613,7 @@ class Application(ctk.CTk):
         if self.recording_manager:
             self.context_menu.add_separator()
             self.context_menu.add_command(
-                label="📹 Ver Gravações", command=self._show_recording_info
+                label="📹 Ver Gravações", command=lambda: self._show_recording_info(only_selected=True)
             )
 
         self.tree.bind("<Double-1>", self._on_item_double_click)
@@ -2534,18 +2531,46 @@ class Application(ctk.CTk):
         except Exception as e:
             logging.error(f"Error updating recording status UI: {e}")
 
-    def _check_session_recordings(self, session_id: str = None):
+    def _check_session_recordings(
+        self, session_id: str = None, connection_id: int = None, connection_title: str = None
+    ):
         """
-        Verifica se existem gravações para uma sessão específica ou lista todas.
+        Verifica gravações de sessão. Quando connection_id é informado, filtra para
+        aquela conexão (prefixos rdp_{id}_ ou mstsc_{id}_).
 
         Args:
-            session_id: ID da sessão para verificar. Se None, lista todas as gravações.
+            session_id: ID exato da sessão (prioritário).
+            connection_id: ID da conexão para filtrar gravações.
 
         Returns:
             List[Dict]: Lista de informações sobre gravações encontradas
         """
         if not self.recording_manager:
             return []
+
+        def sanitize_title(name: str) -> str:
+            import re
+            # Normaliza para comparar com nomes de arquivos gravados (troca separadores por _, mantendo hífens)
+            return re.sub(r"[^A-Za-z0-9\-]+", "_", name).strip("_").lower()
+
+        normalized_title = sanitize_title(connection_title) if connection_title else None
+
+        logging.info(f"Checking session recordings for connection_id={connection_id}, normalized_title={normalized_title}")
+        
+        def matches_connection(session_identifier: str) -> bool:
+            if connection_id is None and not normalized_title:
+                return True
+
+            logging.info("AQUI TA PASSANDO")
+            if normalized_title:
+                logging.info(f"Matching by normalized title: {normalized_title} in {session_identifier.lower()}")
+                if normalized_title in session_identifier.lower():
+                    logging.info('titulo encontrado')
+                    logging.info(f"Session identifier '{session_identifier}' matches normalized title '{normalized_title}'")
+                    
+                    return True
+
+            return False
 
         try:
             from pathlib import Path
@@ -2554,11 +2579,12 @@ class Application(ctk.CTk):
             recordings_info = []
 
             if session_id:
-                # Verifica gravações específicas da sessão
-                video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
+                video_files = list(recordings_dir.glob(f"{session_id}*.avi"))
+                logging.info(f'Checking recordings for session_id: {session_id}, found {len(video_files)} video files.')
                 metadata_file = recordings_dir / f"{session_id}_metadata.json"
 
                 if video_files or metadata_file.exists():
+                    logging.info("ENTROU AQUI EM")
                     info = {
                         "session_id": session_id,
                         "video_files": [str(f) for f in video_files],
@@ -2566,43 +2592,32 @@ class Application(ctk.CTk):
                         "total_size_mb": sum(f.stat().st_size for f in video_files) / (1024 * 1024),
                         "file_count": len(video_files),
                     }
-                    recordings_info.append(info)
+                    if matches_connection(session_id):
+                        recordings_info.append(info)
             else:
-                # Lista todas as gravações
-                all_videos = list(recordings_dir.glob("*.mp4"))
-                sessions = {}
+                all_videos = list(recordings_dir.glob("*.avi"))
 
                 for video_file in all_videos:
-                    # Extrai session_id do nome do arquivo (formato: session_id_part_X.mp4)
-                    name_parts = video_file.stem.split("_")
-                    if len(name_parts) >= 2:
-                        session_id = (
-                            "_".join(name_parts[:-2])
-                            if name_parts[-2] == "part"
-                            else "_".join(name_parts[:-1])
-                        )
+                    # Usa o nome completo do arquivo como session_identifier (sem agrupamento)
+                    # Cada arquivo de vídeo será uma entrada individual
+                    session_identifier = video_file.stem
+                    
+                    logging.debug(f"Processing video file: {video_file.name}, identifier: {session_identifier}")
 
-                        if session_id not in sessions:
-                            sessions[session_id] = {
-                                "session_id": session_id,
-                                "video_files": [],
-                                "metadata_file": None,
-                                "total_size_mb": 0,
-                                "file_count": 0,
-                            }
+                    if not matches_connection(session_identifier):
+                        continue
 
-                        sessions[session_id]["video_files"].append(str(video_file))
-                        sessions[session_id]["total_size_mb"] += video_file.stat().st_size / (
-                            1024 * 1024
-                        )
-                        sessions[session_id]["file_count"] += 1
-
-                        # Verifica se existe metadata
-                        metadata_file = recordings_dir / f"{session_id}_metadata.json"
-                        if metadata_file.exists():
-                            sessions[session_id]["metadata_file"] = str(metadata_file)
-
-                recordings_info = list(sessions.values())
+                    # Cria uma entrada individual para cada vídeo
+                    metadata_file = recordings_dir / f"{session_identifier}_metadata.json"
+                    
+                    info = {
+                        "session_id": session_identifier,
+                        "video_files": [str(video_file)],
+                        "metadata_file": str(metadata_file) if metadata_file.exists() else None,
+                        "total_size_mb": video_file.stat().st_size / (1024 * 1024),
+                        "file_count": 1,
+                    }
+                    recordings_info.append(info)
 
             return recordings_info
 
@@ -2610,15 +2625,31 @@ class Application(ctk.CTk):
             logging.error(f"Erro ao verificar gravações: {e}")
             return []
 
-    def _show_recording_info(self):
-        """Mostra informações sobre gravações existentes."""
-        recordings = self._check_session_recordings()
+    def _show_recording_info(self, only_selected: bool = False):
+        """Mostra gravações. Se only_selected=True, filtra pela conexão selecionada."""
+        connection_id = None
+        connection_name = None
+
+        if only_selected:
+            data = self._get_selected_item_data()
+            if not data:
+                messagebox.showinfo("Gravações", "Selecione uma conexão para ver gravações.")
+                return
+            try:
+                connection_id = int(data.get("db_id")) if data.get("db_id") else None
+            except (TypeError, ValueError):
+                connection_id = None
+            connection_name = data.get("title")
+
+        recordings = self._check_session_recordings(
+            connection_id=connection_id, connection_title=connection_name
+        )
 
         if not recordings:
+            msg_prefix = f"Nenhuma gravação encontrada para '{connection_name}'." if connection_id else "Nenhuma gravação encontrada."
             messagebox.showinfo(
                 "Gravações",
-                "Nenhuma gravação encontrada.\n\n"
-                f"Diretório de gravações: {self.settings.RECORDING_OUTPUT_DIR}",
+                f"{msg_prefix}\n\nDiretório de gravações: {self.settings.RECORDING_OUTPUT_DIR}",
             )
             return
 
@@ -2634,7 +2665,7 @@ class Application(ctk.CTk):
 
         # Título
         title_label = ctk.CTkLabel(
-            main_frame, text="📹 Gravações de Sessão", font=("Segoe UI", 16, "bold")
+            main_frame, text="Gravações de Sessão", font=("Segoe UI", 16, "bold")
         )
         title_label.pack(pady=(10, 5))
 
@@ -2665,12 +2696,33 @@ class Application(ctk.CTk):
             info_label = ctk.CTkLabel(session_frame, text=session_info, justify="left", anchor="w")
             info_label.pack(padx=10, pady=10, fill="x")
 
+            # Se há arquivos de vídeo, adiciona botão para abrir o primeiro
+            if recording['video_files']:
+                def play_video(video_file=recording['video_files'][0]):
+                    try:
+                        import os as os_module
+                        os_module.startfile(video_file)
+                    except Exception as e:
+                        logging.error(f"Erro ao abrir vídeo: {e}")
+                        messagebox.showerror("Erro", f"Não foi possível abrir o vídeo:\n{e}")
+
+                play_button = ctk.CTkButton(
+                    session_frame,
+                    text="▶️ Assistir Gravação",
+                    command=play_video,
+                    height=30,
+                    font=("Segoe UI", 11),
+                    fg_color="#4CAF50",
+                    hover_color="#388E3C",
+                )
+                play_button.pack(padx=10, pady=(0, 10), fill="x")
+
+
         # Botão para abrir diretório
         def open_recordings_dir():
             try:
                 import subprocess
-
-                subprocess.run(["explorer", self.settings.RECORDING_OUTPUT_DIR], check=True)
+                subprocess.run(["explorer", self.settings.RECORDING_OUTPUT_DIR])
             except Exception as e:
                 logging.error(f"Erro ao abrir diretório: {e}")
                 messagebox.showerror("Erro", f"Não foi possível abrir o diretório:\n{e}")
