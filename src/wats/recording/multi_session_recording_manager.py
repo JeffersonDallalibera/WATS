@@ -117,7 +117,7 @@ class MultiSessionRecordingManager:
                     fps=recording_config.get("fps", 5),  # ⚡ 5 FPS (antes 10) = arquivos 50% menores
                     quality=recording_config.get("quality", 30),  # ⚡ CRF 30 (antes 23) = menor qualidade, arquivos menores
                     resolution_scale=recording_config.get("resolution_scale", 0.75),  # ⚡ 75% resolução (antes 100%)
-                    recording_mode=recording_config.get("mode", "rdp_window"),
+                    recording_mode=recording_config.get("mode", "full_screen"),
                     force_window_maximized=recording_config.get("force_window_maximized", True),
                 )
                 
