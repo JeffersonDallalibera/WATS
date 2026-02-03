@@ -48,18 +48,6 @@
       "log_protection_actions": true
     }
   },
-  "api": {
-    "enabled": false,
-    "base_url": "",
-    "api_token": "",
-    "auto_upload": false,
-    "upload_timeout": 60,
-    "max_retries": 3,
-    "max_concurrent_uploads": 2,
-    "delete_after_upload": false,
-    "upload_older_recordings": true,
-    "max_file_age_days": 30
-  },
   "application": {
     "log_level": "INFO",
     "theme": "Dark",

@@ -11,27 +11,10 @@ from typing import Any, Callable, Dict, Optional
 from .file_rotation_manager import FileRotationManager
 from .smart_session_recorder import SmartSessionRecorder
 
-# ============================================================================
-# API INTEGRATION DESABILITADA (não está sendo usada no momento)
-# ============================================================================
-# Import API components if available
-# try:
-#     from ..api import ApiIntegrationManager
-#     API_AVAILABLE = True
-# except ImportError:
-#     logging.warning("API upload system not available")
-#     API_AVAILABLE = False
-#     ApiIntegrationManager = None
-
-# Forçar API como indisponível
-API_AVAILABLE = False
-ApiIntegrationManager = None
-
-
 class RecordingManager:
     """
     Central manager for session recording in WATS application.
-    Coordinates between SmartSessionRecorder, FileRotationManager, and API upload.
+    Coordinates between SmartSessionRecorder and FileRotationManager.
     Provides high-level interface for the main application with intelligent recording features.
     """
 
@@ -45,7 +28,6 @@ class RecordingManager:
         self.settings = settings
         self.smart_recorder: Optional[SmartSessionRecorder] = None
         self.rotation_manager: Optional[FileRotationManager] = None
-        self.api_manager = None  # Optional[ApiIntegrationManager]
 
         # State tracking
         self.current_session_id: Optional[str] = None
@@ -96,37 +78,6 @@ class RecordingManager:
 
             # Start automatic cleanup
             self.rotation_manager.start_automatic_cleanup()
-
-            # Initialize API upload manager if available and enabled
-            if (
-                API_AVAILABLE
-                and hasattr(self.settings, "API_ENABLED")
-                and self.settings.API_ENABLED
-            ):
-                try:
-                    self.api_manager = ApiIntegrationManager(self.settings)
-                    if self.api_manager.is_initialized:
-                        # Set up callbacks for upload events
-                        self.api_manager.on_upload_started = self._on_api_upload_started
-                        self.api_manager.on_upload_completed = self._on_api_upload_completed
-                        self.api_manager.on_upload_failed = self._on_api_upload_failed
-
-                        logging.info("API upload system initialized successfully")
-
-                        # Upload any older recordings if configured
-                        if (
-                            hasattr(self.settings, "API_UPLOAD_OLDER_RECORDINGS")
-                            and self.settings.API_UPLOAD_OLDER_RECORDINGS
-                        ):
-                            self._upload_older_recordings_async()
-                    else:
-                        logging.warning("API upload system failed to initialize")
-                        self.api_manager = None
-                except Exception as e:
-                    logging.error(f"Failed to initialize API upload system: {e}")
-                    self.api_manager = None
-            elif hasattr(self.settings, "API_ENABLED") and self.settings.API_ENABLED:
-                logging.warning("API upload is enabled but API system is not available")
 
             self.is_initialized = True
             logging.info("Recording system initialized successfully")
@@ -251,15 +202,6 @@ class RecordingManager:
                             )
                         except Exception as e:
                             logging.warning(f"Failed to start compression thread: {e}")
-
-                # Trigger upload if API is available and auto_upload is enabled
-                if (
-                    self.api_manager
-                    and hasattr(self.settings, "API_AUTO_UPLOAD")
-                    and self.settings.API_AUTO_UPLOAD
-                ):
-                    for file_path in created_files:
-                        self._queue_recording_upload(session_id, file_path)
 
                 # Call callback if set
                 if self.on_recording_stopped:
@@ -516,72 +458,6 @@ class RecordingManager:
             f"New recording segment created: {segment.file_path.name} (reason: {segment.reason})"
         )
 
-    def _queue_recording_upload_legacy(self, session_id: str, file_path: str):
-        """Queue a recording file for upload (versão antiga)."""
-        if self.api_manager:
-            try:
-                self.api_manager.queue_upload(file_path, session_id)
-                logging.info(f"Queued recording for upload: {Path(file_path).name}")
-            except Exception as e:
-                logging.error(f"Failed to queue upload for {file_path}: {e}")
-
-    def _compress_recording_async_legacy(self, video_file: Path, crf: int):
-        """Compress a recording file asynchronously (versão antiga)."""
-        try:
-            if not video_file.exists():
-                logging.warning(f"Compression requested but file not found: {video_file}")
-                return
-
-            ffmpeg_cmd = shutil.which("ffmpeg")
-            if not ffmpeg_cmd:
-                logging.warning("ffmpeg not found in PATH; skipping compression")
-                return
-
-            tmp_file = video_file.with_suffix(".tmp.mp4")
-
-            # Build ffmpeg command
-            cmd = [
-                ffmpeg_cmd,
-                "-y",
-                "-i",
-                str(video_file),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                str(crf),
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                str(tmp_file),
-            ]
-
-            logging.info(f"Compressing {video_file.name} -> CRF={crf}")
-            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-            if proc.returncode != 0:
-                logging.error(f"ffmpeg failed for {video_file.name}: {proc.stderr}")
-                if tmp_file.exists():
-                    tmp_file.unlink()
-                return
-
-            # Replace original with compressed file
-            try:
-                backup = video_file.with_suffix(".bak.mp4")
-                video_file.rename(backup)
-                tmp_file.rename(video_file)
-                backup.unlink()
-                logging.info(f"Compression completed and replaced original: {video_file.name}")
-            except Exception as e:
-                logging.error(f"Failed to replace original file after compression: {e}")
-                if tmp_file.exists():
-                    tmp_file.unlink()
-
-        except Exception as e:
-            logging.error(f"Unexpected error during compression: {e}")
-
     def shutdown(self):
         """Shutdown the recording manager and cleanup resources."""
         try:
@@ -591,49 +467,11 @@ class RecordingManager:
             if self.rotation_manager:
                 self.rotation_manager.stop_automatic_cleanup()
 
-            if self.api_manager:
-                self.api_manager.shutdown()
-
             self.is_initialized = False
             logging.info("Recording manager shutdown completed")
 
         except Exception as e:
             logging.error(f"Error during recording manager shutdown: {e}")
-
-    # API Upload Integration Methods
-
-    def _queue_recording_upload(self, session_id: str):
-        """Queue the completed recording for upload."""
-        if not self.api_manager:
-            return
-
-        try:
-            # Find the recording files
-            recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
-
-            # Look for video file
-            video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
-            if not video_files:
-                logging.warning(f"No video file found for session {session_id}")
-                return
-
-            video_file = video_files[0]  # Take the first matching file
-
-            # Look for metadata file
-            metadata_file = recordings_dir / f"{session_id}_metadata.json"
-            if not metadata_file.exists():
-                logging.warning(f"No metadata file found for session {session_id}")
-                return
-
-            # Queue the upload
-            task_id = self.api_manager.upload_recording(video_file, metadata_file)
-            if task_id:
-                logging.info(f"Queued recording upload: {video_file.name} (task: {task_id})")
-            else:
-                logging.error(f"Failed to queue recording upload for session {session_id}")
-
-        except Exception as e:
-            logging.error(f"Error queuing recording upload for {session_id}: {e}")
 
     def _compress_recording_async(self, video_file: Path, crf: int = 28):
         """Compress a recording file using ffmpeg in a background thread.
@@ -702,113 +540,6 @@ class RecordingManager:
 
         except Exception as e:
             logging.error(f"Unexpected error during compression: {e}", exc_info=True)
-
-    def _upload_older_recordings_async(self):
-        """Upload older recordings in a background thread."""
-
-        def upload_task():
-            try:
-                recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
-                task_ids = self.api_manager.upload_older_recordings(recordings_dir)
-                if task_ids:
-                    logging.info(f"Queued {len(task_ids)} older recordings for upload")
-            except Exception as e:
-                logging.error(f"Error uploading older recordings: {e}")
-
-        upload_thread = threading.Thread(target=upload_task, daemon=True)
-        upload_thread.start()
-
-    def _on_api_upload_started(self, task_id: str, filename: str):
-        """Internal callback for API upload started."""
-        logging.info(f"Upload started: {filename} (task: {task_id})")
-        if self.on_upload_started:
-            try:
-                self.on_upload_started(task_id, filename)
-            except Exception as e:
-                logging.error(f"Error in upload started callback: {e}")
-
-    def _on_api_upload_completed(self, task_id: str, server_file_id: str):
-        """Internal callback for API upload completed."""
-        logging.info(f"Upload completed: {task_id} -> {server_file_id}")
-        if self.on_upload_completed:
-            try:
-                self.on_upload_completed(task_id)
-            except Exception as e:
-                logging.error(f"Error in upload completed callback: {e}")
-
-    def _on_api_upload_failed(self, task_id: str, error: str):
-        """Internal callback for API upload failed."""
-        logging.warning(f"Upload failed: {task_id} - {error}")
-        if self.on_upload_failed:
-            try:
-                self.on_upload_failed(task_id, error)
-            except Exception as e:
-                logging.error(f"Error in upload failed callback: {e}")
-
-    # Public API Upload Methods
-
-    def manual_upload_recording(self, session_id: str) -> Optional[str]:
-        """
-        Manually trigger upload of a specific recording.
-
-        Args:
-            session_id: Session ID of the recording to upload
-
-        Returns:
-            Upload task ID if successful, None otherwise
-        """
-        if not self.api_manager:
-            logging.warning("API upload not available")
-            return None
-
-        try:
-            recordings_dir = Path(self.settings.RECORDING_OUTPUT_DIR)
-
-            # Find video file
-            video_files = list(recordings_dir.glob(f"{session_id}_*.mp4"))
-            if not video_files:
-                logging.error(f"No video file found for session {session_id}")
-                return None
-
-            video_file = video_files[0]
-            metadata_file = recordings_dir / f"{session_id}_metadata.json"
-
-            if not metadata_file.exists():
-                logging.error(f"No metadata file found for session {session_id}")
-                return None
-
-            return self.api_manager.upload_recording(video_file, metadata_file)
-
-        except Exception as e:
-            logging.error(f"Error in manual upload for {session_id}: {e}")
-            return None
-
-    def get_upload_status(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """Get the status of an upload task."""
-        if not self.api_manager:
-            return None
-
-        return self.api_manager.get_upload_status(task_id)
-
-    def get_upload_queue_status(self) -> Dict[str, Any]:
-        """Get the status of the upload queue."""
-        if not self.api_manager:
-            return {
-                "queue_size": 0,
-                "active_uploads": 0,
-                "completed_uploads": 0,
-                "failed_uploads": 0,
-                "is_running": False,
-            }
-
-        return self.api_manager.get_queue_status()
-
-    def retry_failed_upload(self, task_id: str) -> bool:
-        """Retry a failed upload."""
-        if not self.api_manager:
-            return False
-
-        return self.api_manager.retry_failed_upload(task_id)
 
     def __del__(self):
         """Destructor to ensure proper cleanup."""

@@ -21,12 +21,6 @@
     "quality": 30,
     "auto_rotation": false
   },
-  "api": {
-    "enabled": false,
-    "base_url": "http://localhost:8080",
-    "timeout": 5,
-    "retry_attempts": 1
-  },
   "ui": {
     "theme": "light",
     "auto_refresh_interval": 10,
