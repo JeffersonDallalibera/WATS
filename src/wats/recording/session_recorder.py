@@ -56,7 +56,7 @@ class SessionRecorder:
         self.max_file_size = max_file_size_mb * 1024 * 1024  # Convert to bytes
         self.max_duration = max_duration_minutes * 60  # Convert to seconds
         self.fps = fps
-        self.quality = quality
+        self.quality = quality  # H.264 CRF (23-35 recomendado, maior = menor arquivo)
         self.resolution_scale = resolution_scale
         self.recording_mode = recording_mode.lower()
         self.force_window_maximized = force_window_maximized
@@ -209,20 +209,21 @@ class SessionRecorder:
             # Cria novo arquivo de vídeo com timestamp
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             connection_name = connection_info.get("name", "Unknown").replace(" ", "_")
-            filename = f"{session_id}_{connection_name}_{timestamp}_resized.mp4"
+            # ⚡ OTIMIZAÇÃO: Grava em .AVI (mais rápido) - será comprimido depois
+            filename = f"{session_id}_{connection_name}_{timestamp}_resized.avi"
             
             self.current_file = self.output_dir / filename
             
-            # Cria novo VideoWriter. Tenta codec primário e fallbacks se necessário.
+            # ⚡ OTIMIZAÇÃO: Cria VideoWriter com codecs rápidos (MJPEG primeiro)
             tried_codecs = []
-            for codec in ("mp4v", "XVID", "avc1"):
+            for codec in ("MJPG", "XVID", "mp4v"):  # MJPEG é o mais rápido
                 tried_codecs.append(codec)
                 fourcc = cv2.VideoWriter_fourcc(*codec)
                 self.current_writer = cv2.VideoWriter(
                     str(self.current_file), fourcc, self.fps, (width, height)
                 )
                 if self.current_writer.isOpened():
-                    logging.info(f"✅ Novo VideoWriter criado com codec {codec}: {self.current_file}")
+                    logging.info(f"✅ Novo VideoWriter AVI criado com codec {codec}: {self.current_file}")
                     break
 
             if not self.current_writer or not self.current_writer.isOpened():
@@ -320,9 +321,23 @@ class SessionRecorder:
                 windows.sort(key=lambda x: x["score"], reverse=True)
                 best_match = windows[0]
                 hwnd = best_match["hwnd"]
-                logging.info(
-                    f"Found RDP window: {best_match['title']} (PID: {best_match['process_id']}, Score: {best_match['score']})"
-                )
+                
+                # 🔍 DEBUG: Mostra posição da janela encontrada
+                try:
+                    rect = win32gui.GetClientRect(hwnd)
+                    left_top = win32gui.ClientToScreen(hwnd, (rect[0], rect[1]))
+                    right_bottom = win32gui.ClientToScreen(hwnd, (rect[2], rect[3]))
+                    logging.info(
+                        f"🎯 Found RDP window: '{best_match['title']}' "
+                        f"(PID: {best_match['process_id']}, Score: {best_match['score']})\n"
+                        f"   📍 Position: ({left_top[0]}, {left_top[1]}) "
+                        f"Size: {right_bottom[0] - left_top[0]}x{right_bottom[1] - left_top[1]}"
+                    )
+                except Exception as e:
+                    logging.info(
+                        f"🎯 Found RDP window: '{best_match['title']}' "
+                        f"(PID: {best_match['process_id']}, Score: {best_match['score']})"
+                    )
 
                 # Try to restore if minimized
                 self._try_restore_window(hwnd)
@@ -345,14 +360,27 @@ class SessionRecorder:
             return None
 
     def _get_window_rect(self, hwnd: int) -> Optional[Dict[str, int]]:
-        """Get window rectangle coordinates."""
+        """
+        Get window CLIENT AREA rectangle coordinates (conteúdo interno sem bordas).
+        Essencial para RDP: captura apenas a sessão remota, não a janela do cliente.
+        """
         try:
-            rect = win32gui.GetWindowRect(hwnd)
+            # ⚡ CORREÇÃO CRÍTICA: Usa GetClientRect + ClientToScreen para pegar apenas conteúdo
+            # GetWindowRect pega a janela inteira (bordas, barra de título, etc.)
+            # GetClientRect pega APENAS a área de conteúdo (o que está dentro da janela)
+            
+            # Pega retângulo do CLIENT AREA (conteúdo interno)
+            rect = win32gui.GetClientRect(hwnd)
+            
+            # Converte coordenadas locais (client) para coordenadas de tela
+            left_top = win32gui.ClientToScreen(hwnd, (rect[0], rect[1]))
+            right_bottom = win32gui.ClientToScreen(hwnd, (rect[2], rect[3]))
+            
             window_rect = {
-                "left": rect[0],
-                "top": rect[1],
-                "width": rect[2] - rect[0],
-                "height": rect[3] - rect[1],
+                "left": left_top[0],
+                "top": left_top[1],
+                "width": right_bottom[0] - left_top[0],
+                "height": right_bottom[1] - left_top[1],
             }
 
             # Check if window is minimized or off-screen
@@ -365,22 +393,31 @@ class SessionRecorder:
                 logging.warning(f"Window appears minimized or invalid: {window_rect}")
                 return None
 
+            logging.debug(
+                f"🎬 CLIENT AREA: {window_rect['width']}x{window_rect['height']} "
+                f"at ({window_rect['left']}, {window_rect['top']})"
+            )
             return window_rect
         except Exception as e:
-            logging.error(f"Error getting window rect: {e}")
+            logging.error(f"Error getting window client rect: {e}")
             return None
 
     def _update_monitor_for_window(self, hwnd: int):
-        """Update monitor configuration for specific window."""
+        """
+        Update monitor configuration for specific window.
+        IMPORTANTE: MSS precisa das coordenadas EXATAS da tela, sem scaling.
+        O scaling é aplicado depois no resize do frame capturado.
+        """
         window_rect = self._get_window_rect(hwnd)
         if window_rect:
-            # Apply resolution scaling
-            if self.resolution_scale != 1.0:
-                window_rect["width"] = int(window_rect["width"] * self.resolution_scale)
-                window_rect["height"] = int(window_rect["height"] * self.resolution_scale)
-
+            # ⚠️ CRÍTICO: NÃO aplicar resolution_scale aqui!
+            # MSS precisa das coordenadas reais da tela para capturar corretamente
+            # O scaling será aplicado DEPOIS na captura do frame
             self.monitor = window_rect
-            logging.info(f"Updated monitor for window: {window_rect}")
+            logging.info(
+                f"📍 Monitor atualizado para janela RDP: {window_rect['width']}x{window_rect['height']} "
+                f"at ({window_rect['left']}, {window_rect['top']})"
+            )
         else:
             logging.warning("Window rect invalid, switching to full screen recording")
             # Switch to full screen mode when window is not properly visible
@@ -537,13 +574,28 @@ class SessionRecorder:
 
             # Set up window tracking based on recording mode
             if self.recording_mode == "rdp_window":
-                self.target_window_handle = self._find_rdp_window(connection_info)
+                # ⚡ RETRY LOGIC: Janela RDP pode demorar para aparecer (até 3s)
+                max_attempts = 6  # 6 tentativas × 0.5s = 3 segundos
+                self.target_window_handle = None
+                
+                for attempt in range(max_attempts):
+                    self.target_window_handle = self._find_rdp_window(connection_info)
+                    if self.target_window_handle:
+                        break
+                    if attempt < max_attempts - 1:
+                        logging.info(f"⏳ Aguardando janela RDP aparecer (tentativa {attempt + 1}/{max_attempts})...")
+                        time.sleep(0.5)
+                
                 if self.target_window_handle:
                     # Try to get window position - if invalid, fallback to full screen
                     window_rect = self._get_window_rect(self.target_window_handle)
                     if window_rect:
                         self._update_monitor_for_window(self.target_window_handle)
-                        logging.info(f"Recording RDP window for session {session_id}")
+                        logging.info(
+                            f"✅ Gravando janela RDP (session {session_id}): "
+                            f"{window_rect['width']}x{window_rect['height']} "
+                            f"at monitor ({window_rect['left']}, {window_rect['top']})"
+                        )
                     else:
                         logging.warning(
                             "RDP window found but not accessible/visible, using full screen"
@@ -553,7 +605,7 @@ class SessionRecorder:
                         self.monitor = self._get_monitor_config()
                 else:
                     logging.warning(
-                        f"RDP window not found for session {session_id}, using full screen"
+                        f"❌ RDP window not found after {max_attempts} attempts for session {session_id}, using full screen"
                     )
                     self.recording_mode = "full_screen"  # Fallback
 
@@ -783,9 +835,10 @@ class SessionRecorder:
         """Create a new video file for recording."""
         try:
             # Generate filename with timestamp
+            # ⚡ OTIMIZAÇÃO: Grava em .AVI primeiro (mais rápido) - será comprimido para .mp4 depois
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             connection_name = connection_info.get("name", "Unknown").replace(" ", "_")
-            filename = f"{session_id}_{connection_name}_{timestamp}.mp4"
+            filename = f"{session_id}_{connection_name}_{timestamp}.avi"
 
             self.current_file = self.output_dir / filename
             self.recording_start_time = time.time()
@@ -798,9 +851,10 @@ class SessionRecorder:
                 width = int(width * self.resolution_scale)
                 height = int(height * self.resolution_scale)
 
-            # Create VideoWriter with preferred codecs and fallback if needed
+            # ⚡ OTIMIZAÇÃO: Create VideoWriter with fast AVI codecs (MJPEG primeiro - mais rápido)
+            # Será comprimido para H.264/MP4 depois pelo MultiSessionRecordingManager
             tried_codecs = []
-            for codec in ("mp4v", "XVID", "avc1"):
+            for codec in ("MJPG", "XVID", "mp4v"):  # MJPEG é o mais rápido para AVI
                 tried_codecs.append(codec)
                 fourcc = cv2.VideoWriter_fourcc(*codec)
                 self.current_writer = cv2.VideoWriter(
@@ -808,7 +862,7 @@ class SessionRecorder:
                 )
                 if self.current_writer.isOpened():
                     logging.info(
-                        f"Created new video file: {self.current_file} (dimensions: {width}x{height}, codec={codec})"
+                        f"⚡ Created AVI file (fast write): {self.current_file} (dimensions: {width}x{height}, codec={codec})"
                     )
                     break
 
@@ -923,5 +977,8 @@ class SessionRecorder:
 
     def __del__(self):
         """Destructor to ensure proper cleanup."""
-        if self.is_recording:
-            self.stop_recording()
+        try:
+            if hasattr(self, 'is_recording') and self.is_recording:
+                self.stop_recording()
+        except Exception:
+            pass  # Ignore errors during cleanup

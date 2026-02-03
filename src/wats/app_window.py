@@ -30,23 +30,26 @@ from .utils import hash_password_md5, parse_particularities
 from .utils.process_monitor import is_rdp_connection_active, get_rdp_monitor
 from .util_cache.thread_pool import get_thread_pool, shutdown_thread_pool
 
-# Importação condicional do RecordingManager em modo demo
+# Importação condicional do MultiSessionRecordingManager em modo demo
 if not is_demo_mode():
-    from .recording import RecordingManager
+    from .recording import MultiSessionRecordingManager
 else:
-    # Mock do RecordingManager para modo demo
-    class RecordingManager:
+    # Mock do MultiSessionRecordingManager para modo demo
+    class MultiSessionRecordingManager:
         def __init__(self, *args, **kwargs):
             pass
 
-        def initialize(self):
+        def initialize(self, *args, **kwargs):
             return True
 
         def set_callbacks(self, *args, **kwargs):
             pass
 
-        def start_recording(self, *args, **kwargs):
-            pass
+        def start_session_recording(self, *args, **kwargs):
+            return False
+
+        def stop_session_recording(self, *args, **kwargs):
+            return False
 
         def stop_recording(self, *args, **kwargs):
             pass
@@ -190,6 +193,7 @@ class Application(ctk.CTk):
         # Lightweight initial state
         self.data_cache: List[ConnectionData] = []
         self.active_heartbeats: Dict[int, Event] = {}
+        self.connection_recordings: Dict[int, str] = {}  # Maps con_codigo to session_id
         self._refresh_job = None
         self.tree_item_map: Dict[int, str] = {}
         self.group_item_map: Dict[str, str] = {}
@@ -358,16 +362,11 @@ class Application(ctk.CTk):
             except Exception as e:
                 logging.warning(f"Falha ao configurar proteção de sessão: {e}")
 
-            # Initialize recording manager
-            self.recording_manager = RecordingManager(self.settings)
-            if self.recording_manager.initialize():
-                logging.info("Recording manager inicializado")
-                # Set up recording callbacks
-                self.recording_manager.set_callbacks(
-                    on_started=self._on_recording_started,
-                    on_stopped=self._on_recording_stopped,
-                    on_error=self._on_recording_error,
-                )
+            # Initialize multi-session recording manager
+            self.recording_manager = MultiSessionRecordingManager()
+            if self.recording_manager.initialize(self.settings):
+                logging.info("Multi-session recording manager inicializado")
+                # Note: MultiSessionRecordingManager usa callbacks por sessão, não globais
             else:
                 logging.warning("Recording manager initialization failed.")
                 self.recording_manager = None
@@ -1351,11 +1350,14 @@ class Application(ctk.CTk):
                             # Para o heartbeat e limpa a sessão
                             stop_flag.set()
                             
-                            # Para gravação se estiver ativa
-                            if self.recording_manager:
+                            # Para gravação se estiver ativa (busca no mapeamento)
+                            if self.recording_manager and con_id in self.connection_recordings:
                                 try:
-                                    if self.recording_manager.stop_session_recording():
-                                        logging.info(f"[HB {con_id}] ✓ Gravação parada após detecção de desconexão")
+                                    session_id = self.connection_recordings[con_id]
+                                    if self.recording_manager.stop_session_recording(session_id):
+                                        logging.info(f"[HB {con_id}] ✓ Gravação {session_id} parada após detecção de desconexão")
+                                    # Remove do mapeamento
+                                    del self.connection_recordings[con_id]
                                 except Exception as e:
                                     logging.error(f"[HB {con_id}] Erro ao parar gravação: {e}")
                             
@@ -1364,6 +1366,14 @@ class Application(ctk.CTk):
                                 try:
                                     logging.info(f"[CLEANUP] Limpando sessão desconectada externamente {con_id} do usuário {user}")
                                     
+                                    # Finaliza log de acesso em aberto
+                                    try:
+                                        self.db.logs.close_open_access_logs_for_user(
+                                            con_id, user, self.computer_name
+                                        )
+                                    except Exception as e:
+                                        logging.error(f"[CLEANUP] Erro ao finalizar log de acesso: {e}")
+
                                     # Remove do banco de dados
                                     if self.db.logs.delete_connection_log(con_id, user):
                                         logging.info(f"[CLEANUP] Sessão {con_id} removida do banco com sucesso")
@@ -1407,6 +1417,14 @@ class Application(ctk.CTk):
                             def cleanup_removed_user():
                                 try:
                                     logging.info(f"[CLEANUP] Limpando UI para usuário removido {user} da conexão {con_id}")
+                                    # Finaliza log de acesso em aberto
+                                    try:
+                                        self.db.logs.close_open_access_logs_for_user(
+                                            con_id, user, self.computer_name
+                                        )
+                                    except Exception as e:
+                                        logging.error(f"[CLEANUP] Erro ao finalizar log de acesso: {e}")
+
                                     self._cleanup_ui_after_disconnect(con_id, user)
                                     
                                     # Remove do active_heartbeats
@@ -1473,6 +1491,8 @@ class Application(ctk.CTk):
                                         f"[RECORDING] ✓ Gravação iniciada (session_id={recording_session_id}) "
                                         f"para {data.get('ip')} após validação do processo"
                                     )
+                                    # Registra no mapeamento con_codigo -> session_id
+                                    self.connection_recordings[con_codigo] = recording_session_id
                                 else:
                                     logging.warning(
                                         f"[RECORDING] ❌ Falha ao iniciar gravação para {data.get('ip')}"
@@ -1519,6 +1539,14 @@ class Application(ctk.CTk):
                 if db_success.get('connection_log'):
                     def remove_from_db():
                         try:
+                            # Finaliza log de acesso em aberto (se existir)
+                            try:
+                                self.db.logs.close_open_access_logs_for_user(
+                                    con_codigo, username, self.computer_name
+                                )
+                            except Exception as e:
+                                logging.error(f"[VALIDATION] Erro ao finalizar log de acesso: {e}")
+
                             self.db.logs.delete_connection_log(con_codigo, username)
                             logging.info(f"[VALIDATION] ✓ Registro removido do banco")
                         except Exception as e:
@@ -1796,13 +1824,19 @@ class Application(ctk.CTk):
                 messagebox.showerror("Erro", f"Executável rdp.exe não encontrado:\n{e}")
                 # Para gravação em caso de erro
                 if session_id and self.recording_manager:
-                    self.recording_manager.stop_session_recording()
+                    self.recording_manager.stop_session_recording(session_id)
+                    # Remove do mapeamento
+                    if con_codigo in self.connection_recordings:
+                        del self.connection_recordings[con_codigo]
             except Exception as e:
                 logging.exception("Erro inesperado ao executar rdp.exe")
                 messagebox.showerror("Erro", f"Falha ao executar o rdp.exe:\n{e}")
                 # Para gravação em caso de erro
                 if session_id and self.recording_manager:
-                    self.recording_manager.stop_session_recording()
+                    self.recording_manager.stop_session_recording(session_id)
+                    # Remove do mapeamento
+                    if con_codigo in self.connection_recordings:
+                        del self.connection_recordings[con_codigo]
 
         # Passa session_id e connection_info como parâmetros nomeados
         self._execute_connection(
@@ -1939,8 +1973,10 @@ class Application(ctk.CTk):
                                 
                                 # ⚡ INICIA GRAVAÇÃO (se configurado)
                                 if session_id and self.recording_manager:
-                                    if self.recording_manager.start_recording(session_id, connection_info):
+                                    if self.recording_manager.start_session_recording(session_id, connection_info):
                                         logging.info(f"[MSTSC] ✓ Gravação iniciada (session_id={session_id})")
+                                        # Registra no mapeamento con_codigo -> session_id
+                                        self.connection_recordings[con_codigo] = session_id
                                     else:
                                         logging.warning(f"[MSTSC] ⚠ Falha ao iniciar gravação")
                                 
@@ -1978,7 +2014,10 @@ class Application(ctk.CTk):
                 messagebox.showerror("Erro", f"Falha ao executar MSTSC:\n{e}")
                 # Para gravação em caso de erro
                 if session_id and self.recording_manager:
-                    self.recording_manager.stop_session_recording()
+                    self.recording_manager.stop_session_recording(session_id)
+                    # Remove do mapeamento
+                    if con_codigo in self.connection_recordings:
+                        del self.connection_recordings[con_codigo]
                 # Limpa credenciais mesmo em caso de erro
                 subprocess.run(f"cmdkey /delete:TERMSRV/{ip}", shell=True, capture_output=True)
 
@@ -2108,10 +2147,23 @@ class Application(ctk.CTk):
 
     def _open_admin_login(self):
         """Abre o diálogo para login de administrador."""
-        password = ctk.CTkInputDialog(
+        dlg = ctk.CTkInputDialog(
             text="Digite a senha de Administrador:",
             title="Login Admin",
-        ).get_input()
+        )
+        # Mascara a entrada; _entry só existe após _create_widgets rodar (é criado via after)
+        def mask_password_field():
+            try:
+                if hasattr(dlg, "_entry"):
+                    dlg._entry.configure(show="*")
+                else:
+                    dlg.after(10, mask_password_field)
+            except Exception:
+                # Se por algum motivo falhar, não interrompe o fluxo do diálogo
+                pass
+
+        dlg.after(0, mask_password_field)
+        password = dlg.get_input()
 
         if not password:
             return
@@ -2482,6 +2534,14 @@ class Application(ctk.CTk):
                                 # Limpa da UI e banco
                                 def cleanup():
                                     try:
+                                        # Finaliza log de acesso em aberto
+                                        try:
+                                            self.db.logs.close_open_access_logs_for_user(
+                                                con_codigo, self.user_session_name, self.computer_name
+                                            )
+                                        except Exception as e:
+                                            logging.error(f"[CLEANUP] Erro ao finalizar log de acesso: {e}")
+
                                         if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
                                             logging.info(f"[CLEANUP] Sessão {con_codigo} removida do banco")
                                             self._remove_user_from_ui(con_codigo, self.user_session_name)
@@ -2975,6 +3035,11 @@ class Application(ctk.CTk):
                 logging.info(f"Tentando desconectar usuário '{connected_user}' da conexão {connection_id}")
                 
                 # Força desconexão do outro usuário
+                try:
+                    self.db.logs.close_open_access_logs_for_user(connection_id, connected_user)
+                except Exception as e:
+                    logging.error(f"Erro ao finalizar log de acesso do usuário {connected_user}: {e}")
+
                 if self.db.logs.delete_connection_log(connection_id, connected_user):
                     logging.info(f"Usuário {connected_user} desconectado para acesso exclusivo")
                     
@@ -3208,6 +3273,12 @@ class Application(ctk.CTk):
                         f"[CLEANUP_ORPHAN] ⚠️ Con {con_codigo} sem IP - "
                         f"REMOVENDO órfã sem validação de processo"
                     )
+                    try:
+                        self.db.logs.close_open_access_logs_for_user(
+                            con_codigo, self.user_session_name, self.computer_name
+                        )
+                    except Exception as e:
+                        logging.error(f"[CLEANUP_ORPHAN] Erro ao finalizar log de acesso: {e}")
                     if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
                         orphaned_count += 1
                         self._remove_user_from_ui(con_codigo, self.user_session_name)
@@ -3223,6 +3294,12 @@ class Application(ctk.CTk):
                     logging.warning(f"[CLEANUP_ORPHAN] 🧟 Órfã detectada: Con {con_codigo} @ {server_ip}")
                     
                     # Remove do banco
+                    try:
+                        self.db.logs.close_open_access_logs_for_user(
+                            con_codigo, self.user_session_name, self.computer_name
+                        )
+                    except Exception as e:
+                        logging.error(f"[CLEANUP_ORPHAN] Erro ao finalizar log de acesso: {e}")
                     if self.db.logs.delete_connection_log(con_codigo, self.user_session_name):
                         orphaned_count += 1
                         logging.info(f"[CLEANUP_ORPHAN] ✓ Removida do banco: Con {con_codigo}")

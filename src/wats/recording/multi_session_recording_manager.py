@@ -108,10 +108,21 @@ class MultiSessionRecordingManager:
                 self.recording_configs[session_id] = recording_config
 
                 # Create and start the recorder
-                # Note: SessionRecorder automatically sanitizes connection_info to protect
-                # sensitive data
-                recorder = SessionRecorder(connection_info, recording_config)
-                if recorder.start_recording():
+                # ⚡ OTIMIZAÇÃO: FPS baixo (5) + quality alta (30 CRF) + resolução 75% = arquivos MUITO menores
+                # SessionRecorder expects: output_dir, max_file_size_mb, max_duration_minutes, fps, quality, etc.
+                recorder = SessionRecorder(
+                    output_dir=recording_config.get("output_dir", "./recordings"),
+                    max_file_size_mb=recording_config.get("max_file_size_mb", 100),
+                    max_duration_minutes=recording_config.get("max_duration_minutes", 30),
+                    fps=recording_config.get("fps", 5),  # ⚡ 5 FPS (antes 10) = arquivos 50% menores
+                    quality=recording_config.get("quality", 30),  # ⚡ CRF 30 (antes 23) = menor qualidade, arquivos menores
+                    resolution_scale=recording_config.get("resolution_scale", 0.75),  # ⚡ 75% resolução (antes 100%)
+                    recording_mode=recording_config.get("mode", "rdp_window"),
+                    force_window_maximized=recording_config.get("force_window_maximized", True),
+                )
+                
+                # Start recording with session_id and connection_info
+                if recorder.start_recording(session_id, connection_info):
                     self.active_recordings[session_id] = recorder
                     if callback:
                         self.callbacks[session_id] = callback
@@ -154,10 +165,12 @@ class MultiSessionRecordingManager:
                         f"Stopped recording for session {session_id}, saved to: {video_path}"
                     )
 
-                    # Start compression in background if enabled
+                    # ⚡ OTIMIZAÇÃO: Sempre comprime AVI -> MP4 (compress_enabled default = True)
                     recording_config = self.recording_configs.get(session_id, {})
-                    if recording_config.get("compress_enabled", False):
+                    if recording_config.get("compress_enabled", True):  # Default True
                         self._compress_recording_async(video_path, recording_config)
+                    else:
+                        logging.info(f"⚠️ Compression disabled - keeping AVI file: {video_path}")
 
                     # Call callback if provided
                     if session_id in self.callbacks:
@@ -295,6 +308,7 @@ class MultiSessionRecordingManager:
     def _compress_recording_async(self, video_path: str, recording_config: Dict[str, Any]):
         """
         Compress a recording file using ffmpeg in a background thread.
+        Converte .AVI (rápido de escrever) para .MP4 (H.264 comprimido).
 
         Args:
             video_path: Path to the video file to compress
@@ -314,52 +328,76 @@ class MultiSessionRecordingManager:
                     return
 
                 crf = recording_config.get("compress_crf", 28)
-                tmp_file = video_file.with_suffix(".tmp.mp4")
+                
+                # ⚡ OTIMIZAÇÃO: Converte .AVI -> .MP4 (H.264)
+                # Se já for .mp4, recomprime com melhor qualidade
+                if video_file.suffix.lower() == ".avi":
+                    output_file = video_file.with_suffix(".mp4")
+                    logging.info(f"⚡ Converting AVI to MP4: {video_file.name} -> {output_file.name}")
+                else:
+                    output_file = video_file.with_suffix(".tmp.mp4")
 
-                # Build ffmpeg command
+                # Build ffmpeg command with optimized settings
                 cmd = [
                     ffmpeg_cmd,
-                    "-y",
-                    "-i",
-                    str(video_file),
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    str(crf),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    str(tmp_file),
+                    "-y",  # Overwrite output
+                    "-i", str(video_file),
+                    "-c:v", "libx264",  # H.264 codec
+                    "-preset", "fast",  # ⚡ Mais rápido que 'veryfast' mas mantém qualidade
+                    "-crf", str(crf),   # Quality (18-28 recomendado, default 28)
+                    "-movflags", "+faststart",  # Permite streaming
+                    "-pix_fmt", "yuv420p",  # Compatibilidade máxima
+                    str(output_file),
                 ]
 
-                logging.info(f"Compressing {video_file.name} -> CRF={crf}")
+                logging.info(f"🔄 Compressing: {video_file.name} -> CRF={crf}, preset=fast")
                 proc = subprocess.run(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE, 
+                    text=True,
+                    timeout=600  # Timeout de 10 minutos
                 )
 
                 if proc.returncode != 0:
-                    logging.error(f"ffmpeg failed for {video_file.name}: {proc.stderr}")
-                    if tmp_file.exists():
-                        tmp_file.unlink()
+                    logging.error(f"❌ ffmpeg failed for {video_file.name}: {proc.stderr}")
+                    if output_file.exists():
+                        output_file.unlink()
                     return
 
-                # Replace original with compressed file
-                try:
-                    backup = video_file.with_suffix(".bak.mp4")
-                    video_file.rename(backup)
-                    tmp_file.rename(video_file)
-                    backup.unlink()
-                    logging.info(f"Compression completed and replaced original: {video_file.name}")
-                except Exception as e:
-                    logging.error(f"Failed to replace original file after compression: {e}")
-                    if tmp_file.exists():
-                        tmp_file.unlink()
+                # ⚡ Se converteu de AVI -> MP4, deleta o AVI original
+                if video_file.suffix.lower() == ".avi" and output_file.exists():
+                    try:
+                        original_size = video_file.stat().st_size / (1024 * 1024)  # MB
+                        compressed_size = output_file.stat().st_size / (1024 * 1024)  # MB
+                        ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+                        
+                        video_file.unlink()  # Deleta AVI
+                        logging.info(
+                            f"✅ Compression completed: {output_file.name} "
+                            f"({original_size:.1f}MB -> {compressed_size:.1f}MB, "
+                            f"saved {ratio:.1f}%)"
+                        )
+                    except Exception as e:
+                        logging.error(f"Failed to cleanup after compression: {e}")
+                
+                # Se era .mp4 original, substitui pelo comprimido
+                elif output_file.suffix == ".mp4" and output_file.name.endswith(".tmp.mp4"):
+                    try:
+                        backup = video_file.with_suffix(".bak.mp4")
+                        video_file.rename(backup)
+                        output_file.rename(video_file)
+                        backup.unlink()
+                        logging.info(f"✅ Re-compression completed: {video_file.name}")
+                    except Exception as e:
+                        logging.error(f"Failed to replace original file after compression: {e}")
+                        if output_file.exists():
+                            output_file.unlink()
 
+            except subprocess.TimeoutExpired:
+                logging.error(f"⏱️ Compression timeout for {video_file.name}")
             except Exception as e:
-                logging.error(f"Unexpected error during compression: {e}")
+                logging.error(f"❌ Unexpected error during compression: {e}")
 
         # Start compression in background thread
         compress_thread = threading.Thread(target=compress_task, daemon=True)
