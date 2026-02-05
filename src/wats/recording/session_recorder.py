@@ -14,6 +14,7 @@ import psutil
 import win32con
 import win32gui
 import win32process
+import win32ui
 
 
 class SessionRecorder:
@@ -36,9 +37,11 @@ class SessionRecorder:
         resolution_scale: float = 1.0,
         recording_mode: str = "full_screen",
         force_window_maximized: bool = True,
+        track_window_movement: bool = True,
+        exclude_non_rdp_content: bool = True,
     ):
         """
-        Initialize the session recorder.
+        Initialize the session recorder optimized for RDP recording.
 
         Args:
             output_dir: Directory to save recordings
@@ -49,6 +52,8 @@ class SessionRecorder:
             resolution_scale: Scale factor for resolution (1.0 = full, 0.5 = half)
             recording_mode: "full_screen", "rdp_window", or "active_window"
             force_window_maximized: Force RDP window to be maximized (prevents FFmpeg errors)
+            track_window_movement: ✅ Track and follow RDP window if it moves
+            exclude_non_rdp_content: ✅ Exclude non-RDP content from recording
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +65,8 @@ class SessionRecorder:
         self.resolution_scale = resolution_scale
         self.recording_mode = recording_mode.lower()
         self.force_window_maximized = force_window_maximized
+        self.track_window_movement = track_window_movement  # ✅ NEW: Follow RDP window
+        self.exclude_non_rdp_content = exclude_non_rdp_content  # ✅ NEW: Only record RDP
 
         # Validate recording mode
         valid_modes = ["full_screen", "rdp_window", "active_window"]
@@ -80,46 +87,56 @@ class SessionRecorder:
         self.target_window_handle: Optional[int] = None
         self.target_process_name: Optional[str] = None
         
+        # ✅ Window tracking for RDP movement detection
+        self.rdp_window_tracking_enabled = track_window_movement and recording_mode == "rdp_window"
+        self.last_rdp_window_position: Optional[Dict[str, int]] = None
+        self.rdp_window_moves_count: int = 0
+        
         # Rastreamento de dimensões para detectar mudanças
         self.last_frame_width: Optional[int] = None
         self.last_frame_height: Optional[int] = None
         self.dimension_change_count: int = 0
         self.force_window_maximized: bool = True  # Força janela maximizada para evitar problemas
+        
+        # Frame capture statistics
+        self.frames_captured: int = 0
+        self.frames_failed: int = 0
 
         # Screen capture setup
         self.sct = mss.mss()
         self.monitor = self._get_monitor_config()
 
         logging.info(
-            f"SessionRecorder initialized - Output: {self.output_dir}, "
+            f"✅ SessionRecorder initialized - Output: {self.output_dir}, "
             f"Max size: {max_file_size_mb}MB, Max duration: {max_duration_minutes}min, "
-            f"FPS: {fps}, Quality: {quality}, Scale: {resolution_scale}, Mode: {self.recording_mode}")
+            f"FPS: {fps}, Quality: {quality}, Scale: {resolution_scale}, Mode: {self.recording_mode}, "
+            f"RDP Tracking: {self.rdp_window_tracking_enabled}, "
+            f"Exclude Non-RDP: {self.exclude_non_rdp_content}")
 
     def _get_monitor_config(self) -> Dict[str, int]:
         """Get monitor configuration based on recording mode."""
         if self.recording_mode == "full_screen":
             monitor = self.sct.monitors[0]  # Full screen (all monitors)
         else:
-            # For window-specific recording, start with full screen
-            # Will be updated dynamically during recording
+            # For window-specific recording, start with primary monitor
+            # Will be updated dynamically during recording when RDP window is found
+            # DO NOT apply scaling here - MSS needs real screen coordinates
             monitor = self.sct.monitors[1] if len(self.sct.monitors) > 1 else self.sct.monitors[0]
 
-        # Apply resolution scaling
-        if self.resolution_scale != 1.0:
-            width = int(monitor["width"] * self.resolution_scale)
-            height = int(monitor["height"] * self.resolution_scale)
-            monitor = {
-                "top": monitor["top"],
-                "left": monitor["left"],
-                "width": width,
-                "height": height,
-            }
-
-        return monitor
+        # ⚠️ CRITICAL: DO NOT apply resolution_scale here!
+        # MSS needs EXACT screen coordinates to capture properly
+        # Scaling will be applied to the FRAME AFTER capture, not the capture region
+        
+        return {
+            "top": monitor["top"],
+            "left": monitor["left"],
+            "width": monitor["width"],
+            "height": monitor["height"],
+        }
 
     def _try_restore_window(self, hwnd: int) -> bool:
         """
-        Try to restore/maximize a minimized window.
+        Try to restore a minimized window (but don't force maximize).
         
         Args:
             hwnd: Window handle
@@ -128,22 +145,16 @@ class SessionRecorder:
             True if window was restored successfully
         """
         try:
-            # Check if window is minimized
+            # Check if window is minimized - only restore, don't force maximize
             if win32gui.IsIconic(hwnd):
-                logging.info("Window is minimized, attempting to restore")
+                logging.info("Window is minimized, attempting to restore to normal size")
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                time.sleep(0.5)  # Give time for window to restore
-            
-            # Se force_window_maximized estiver ativado, maximiza a janela
-            if self.force_window_maximized and self.recording_mode in ["rdp_window", "active_window"]:
-                logging.info(f"🔳 Maximizando janela RDP para evitar problemas de gravação (HWND: {hwnd})")
-                win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
-                time.sleep(0.3)  # Tempo para maximizar
-                logging.info("✅ Janela maximizada com sucesso")
+                time.sleep(0.3)  # Give time for window to restore
+                logging.info("✅ Window restored to normal size")
                 
             return True
         except Exception as e:
-            logging.warning(f"Failed to restore/maximize window: {e}")
+            logging.warning(f"Failed to restore window: {e}")
             return False
     
     def _check_window_dimension_change(self, current_width: int, current_height: int) -> bool:
@@ -244,72 +255,105 @@ class SessionRecorder:
             raise
 
     def _find_rdp_window(self, connection_info: Dict[str, Any]) -> Optional[int]:
-        """Find RDP window handle based on connection information."""
+        """
+        Find RDP window handle based on connection information.
+        ✅ IMPROVED: More flexible detection for all RDP clients
+        """
         try:
             target_title = connection_info.get("name", "")
             target_ip = connection_info.get("ip", "")
 
-            # Extract IP and port from connection info
+            # Extract IP (remove port if present)
             if ":" in target_ip:
                 ip_part = target_ip.split(":")[0]
             else:
                 ip_part = target_ip
 
             def enum_window_callback(hwnd, windows):
-                if win32gui.IsWindowVisible(hwnd):
-                    window_title = win32gui.GetWindowText(hwnd).lower()
+                if not win32gui.IsWindowVisible(hwnd):
+                    return True
+                
+                window_title = win32gui.GetWindowText(hwnd)
+                window_title_lower = window_title.lower()
 
-                    # Look for RDP-related window titles with specific connection info
-                    rdp_indicators = [
-                        "remote desktop connection",
-                        "área de trabalho remota",
-                        "rdp",
-                        "mstsc",
-                    ]
+                # ✅ EXPANDED: Support more RDP clients
+                rdp_indicators = [
+                    "remote desktop",
+                    "área de trabalho remota",
+                    "rdp",
+                    "mstsc",
+                    "royalts",
+                    "teamviewer",
+                    "anydesk",
+                    "connectwise",
+                    "vncviewer",
+                    "freerdp",
+                    "connection",
+                    "servidor",
+                    "server",
+                ]
 
-                    # Check if window title contains RDP indicators
-                    is_rdp_window = any(indicator in window_title for indicator in rdp_indicators)
+                # ✅ IMPROVED: Check for RDP indicator in window title
+                is_rdp_window = any(indicator in window_title_lower for indicator in rdp_indicators)
 
-                    # Also check if title contains target info
-                    title_contains_target = False
-                    if target_title:
-                        title_contains_target = target_title.lower() in window_title
-                    if ip_part:
-                        title_contains_target = title_contains_target or ip_part in window_title
+                # Check if window title contains target connection info
+                title_contains_target = False
+                if target_title:
+                    title_contains_target = target_title.lower() in window_title_lower
+                if ip_part and ip_part.strip():
+                    title_contains_target = title_contains_target or ip_part in window_title_lower
 
-                    if is_rdp_window or title_contains_target:
-                        try:
-                            # Get process info to verify it's an RDP-related process
-                            _, process_id = win32process.GetWindowThreadProcessId(hwnd)
-                            process = psutil.Process(process_id)
-                            process_name = process.name().lower()
+                # ✅ CRITICAL: Accept window if it has RDP indicator OR target info
+                if is_rdp_window or title_contains_target:
+                    try:
+                        # Get process info to verify
+                        _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+                        process = psutil.Process(process_id)
+                        process_name = process.name().lower()
 
-                            # Check if it's a known RDP process
-                            rdp_processes = ["mstsc.exe", "rdp.exe", "rdpclip.exe"]
-                            if any(rdp_proc in process_name for rdp_proc in rdp_processes):
-                                windows.append(
-                                    {
-                                        "hwnd": hwnd,
-                                        "title": window_title,
-                                        "process_name": process_name,
-                                        "process_id": process_id,
-                                        "score": (
-                                            2 if title_contains_target else 1
-                                        ),  # Higher score for exact match
-                                    }
-                                )
-                            elif is_rdp_window:  # RDP indicator in title but different process
-                                windows.append(
-                                    {
-                                        "hwnd": hwnd,
-                                        "title": window_title,
-                                        "process_name": process_name,
-                                        "process_id": process_id,
-                                        "score": 1,
-                                    }
-                                )
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass  # Skip this window if we can't access process info
+                        # ✅ EXPANDED: Support all common RDP processes
+                        rdp_processes = [
+                            "mstsc.exe",           # Windows RDP
+                            "rdp.exe",
+                            "royalts.exe",         # Royal TS
+                            "teamviewer.exe",      # TeamViewer
+                            "anydesk.exe",         # AnyDesk
+                            "connectwise.exe",     # ConnectWise
+                            "vncviewer.exe",       # VNC
+                            "freerdp.exe",         # FreeRDP
+                            "chrome.exe",          # Chrome RDP extension
+                            "firefox.exe",         # Firefox RDP
+                        ]
+
+                        is_known_rdp = any(rdp_proc in process_name for rdp_proc in rdp_processes)
+
+                        # Score: Higher for exact connection match, lower for generic RDP
+                        if is_known_rdp and title_contains_target:
+                            score = 3  # Highest: Known RDP process with target match
+                        elif is_known_rdp:
+                            score = 2  # Known RDP process
+                        elif title_contains_target:
+                            score = 2  # Has target connection info
+                        else:
+                            score = 1  # Generic RDP indicator
+
+                        # ✅ IMPORTANT: Add window to candidates
+                        windows.append(
+                            {
+                                "hwnd": hwnd,
+                                "title": window_title,
+                                "process_name": process_name,
+                                "process_id": process_id,
+                                "score": score,
+                                "is_known_rdp": is_known_rdp,
+                            }
+                        )
+                        logging.debug(
+                            f"🔍 Found RDP candidate: '{window_title}' (PID: {process_id}, Score: {score})"
+                        )
+
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass  # Skip this window if we can't access process info
 
                 return True
 
@@ -317,34 +361,39 @@ class SessionRecorder:
             win32gui.EnumWindows(enum_window_callback, windows)
 
             if windows:
-                # Sort by score (highest first) and return the best match
+                # ✅ Sort by score (highest first) and return the best match
                 windows.sort(key=lambda x: x["score"], reverse=True)
                 best_match = windows[0]
                 hwnd = best_match["hwnd"]
                 
-                # 🔍 DEBUG: Mostra posição da janela encontrada
+                # 🔍 Log window details
                 try:
                     rect = win32gui.GetClientRect(hwnd)
                     left_top = win32gui.ClientToScreen(hwnd, (rect[0], rect[1]))
                     right_bottom = win32gui.ClientToScreen(hwnd, (rect[2], rect[3]))
+                    window_width = right_bottom[0] - left_top[0]
+                    window_height = right_bottom[1] - left_top[1]
+                    
                     logging.info(
-                        f"🎯 Found RDP window: '{best_match['title']}' "
-                        f"(PID: {best_match['process_id']}, Score: {best_match['score']})\n"
-                        f"   📍 Position: ({left_top[0]}, {left_top[1]}) "
-                        f"Size: {right_bottom[0] - left_top[0]}x{right_bottom[1] - left_top[1]}"
+                        f"✅ RDP Window FOUND: '{best_match['title']}' "
+                        f"(Process: {best_match['process_name']}, PID: {best_match['process_id']}, Score: {best_match['score']}) | "
+                        f"📍 Position: ({left_top[0]}, {left_top[1]}) | "
+                        f"📏 Size: {window_width}x{window_height}"
                     )
                 except Exception as e:
                     logging.info(
-                        f"🎯 Found RDP window: '{best_match['title']}' "
+                        f"✅ RDP Window FOUND: '{best_match['title']}' "
                         f"(PID: {best_match['process_id']}, Score: {best_match['score']})"
                     )
 
-                # Try to restore if minimized
-                self._try_restore_window(hwnd)
-
+                # Don't force restore - user can minimize if they want
+                # PrintWindow works even with minimized windows
                 return hwnd
             else:
-                logging.warning("No RDP window found, falling back to full screen recording")
+                logging.warning(
+                    f"❌ RDP window NOT found for: {target_title or target_ip} | "
+                    f"RDP-only mode: will wait and retry"
+                )
                 return None
 
         except Exception as e:
@@ -365,6 +414,12 @@ class SessionRecorder:
         Essencial para RDP: captura apenas a sessão remota, não a janela do cliente.
         """
         try:
+            # ✅ ALLOW MINIMIZED: Don't force restore - PrintWindow can capture minimized windows
+            # Just log if minimized but continue recording
+            if win32gui.IsIconic(hwnd):
+                logging.debug(f"Window is minimized - continuing recording with PrintWindow")
+                # Don't restore - let user keep window minimized
+            
             # ⚡ CORREÇÃO CRÍTICA: Usa GetClientRect + ClientToScreen para pegar apenas conteúdo
             # GetWindowRect pega a janela inteira (bordas, barra de título, etc.)
             # GetClientRect pega APENAS a área de conteúdo (o que está dentro da janela)
@@ -383,14 +438,16 @@ class SessionRecorder:
                 "height": right_bottom[1] - left_top[1],
             }
 
-            # Check if window is minimized or off-screen
-            if (
-                window_rect["left"] < -1000
-                or window_rect["top"] < -1000
-                or window_rect["width"] < 100
-                or window_rect["height"] < 100
-            ):
-                logging.warning(f"Window appears minimized or invalid: {window_rect}")
+            # ✅ ALLOW MINIMIZED: Handle special minimized coordinates
+            # Windows uses -32000 coordinates for minimized windows - this is OK
+            if window_rect["left"] <= -32000 or window_rect["top"] <= -32000:
+                logging.debug(f"Window is minimized (coordinates: {window_rect['left']}, {window_rect['top']}) - PrintWindow will capture it")
+                # Keep the window rect as-is for PrintWindow to handle
+
+            # Check if window is invalid by size only
+            # (allow negative coordinates for multi-monitor setups)
+            if window_rect["width"] < 100 or window_rect["height"] < 100:
+                logging.warning(f"Window appears invalid (too small): {window_rect}")
                 return None
 
             logging.debug(
@@ -402,28 +459,163 @@ class SessionRecorder:
             logging.error(f"Error getting window client rect: {e}")
             return None
 
-    def _update_monitor_for_window(self, hwnd: int):
+    def _update_monitor_for_window(self, hwnd: int) -> bool:
         """
         Update monitor configuration for specific window.
+        ✅ DETECTS RDP WINDOW MOVEMENT and continues recording
+        ⚠️ CRITICAL: Must provide correct MSS monitor dict format
+        
         IMPORTANTE: MSS precisa das coordenadas EXATAS da tela, sem scaling.
         O scaling é aplicado depois no resize do frame capturado.
         """
         window_rect = self._get_window_rect(hwnd)
         if window_rect:
-            # ⚠️ CRÍTICO: NÃO aplicar resolution_scale aqui!
-            # MSS precisa das coordenadas reais da tela para capturar corretamente
-            # O scaling será aplicado DEPOIS na captura do frame
-            self.monitor = window_rect
-            logging.info(
-                f"📍 Monitor atualizado para janela RDP: {window_rect['width']}x{window_rect['height']} "
-                f"at ({window_rect['left']}, {window_rect['top']})"
+            # ✅ Track RDP window movement
+            if self.rdp_window_tracking_enabled and self.last_rdp_window_position:
+                position_changed = (
+                    window_rect['left'] != self.last_rdp_window_position.get('left') or
+                    window_rect['top'] != self.last_rdp_window_position.get('top')
+                )
+                
+                if position_changed:
+                    self.rdp_window_moves_count += 1
+                    logging.info(
+                        f"🎬 SESSION {self.session_id}: RDP Window MOVED: "
+                        f"({self.last_rdp_window_position.get('left')}, {self.last_rdp_window_position.get('top')}) → "
+                        f"({window_rect['left']}, {window_rect['top']}) [Move #{self.rdp_window_moves_count}] - "
+                        f"✅ CONTINUING RECORDING"
+                    )
+            
+            # Store current position for next check
+            self.last_rdp_window_position = window_rect.copy()
+            
+            # ⚠️ CRÍTICO: Construir dict correto para MSS
+            # MSS espera: {'left': int, 'top': int, 'width': int, 'height': int}
+            mss_monitor = {
+                "left": window_rect["left"],
+                "top": window_rect["top"],
+                "width": window_rect["width"],
+                "height": window_rect["height"],
+            }
+            
+            # Validate monitor dict
+            if mss_monitor["width"] < 100 or mss_monitor["height"] < 100:
+                logging.warning(
+                    f"⚠️ Invalid monitor config for session {self.session_id}: {mss_monitor} | "
+                    f"RDP-only mode: keeping last valid region"
+                )
+                return False
+            
+            self.monitor = mss_monitor
+            logging.debug(
+                f"📍 SESSION {self.session_id}: Monitor updated - RDP window: "
+                f"{mss_monitor['width']}x{mss_monitor['height']} "
+                f"at ({mss_monitor['left']}, {mss_monitor['top']})"
             )
+            return True
         else:
-            logging.warning("Window rect invalid, switching to full screen recording")
-            # Switch to full screen mode when window is not properly visible
-            self.recording_mode = "full_screen"
-            self.target_window_handle = None
-            self.monitor = self._get_monitor_config()
+            logging.warning(
+                f"⚠️ SESSION {self.session_id}: Window rect invalid - RDP-only mode will wait"
+            )
+            return False
+
+    def _capture_rdp_window_frame(self, hwnd: int) -> Optional[np.ndarray]:
+        """
+        Capture ONLY the RDP window content using PrintWindow.
+        This avoids recording any overlaying windows on top of the RDP session.
+        Returns a BGR frame or None if capture fails.
+        ✅ MEMORY OPTIMIZED: Proper GDI cleanup with try-finally
+        """
+        hwnd_dc = None
+        mfc_dc = None
+        save_dc = None
+        save_bitmap = None
+        
+        try:
+            # Ensure valid window
+            if not win32gui.IsWindow(hwnd):
+                return None
+
+            # Try to get window rect - but be lenient about sizes
+            try:
+                rect = win32gui.GetClientRect(hwnd)
+                width = rect[2] - rect[0]
+                height = rect[3] - rect[1]
+            except Exception as e:
+                logging.debug(f"SESSION {self.session_id}: GetClientRect failed: {e}")
+                return None
+
+            # Allow smaller windows - better to record something than nothing
+            if width < 50 or height < 50:
+                logging.debug(f"SESSION {self.session_id}: RDP window too small: {width}x{height}")
+                return None
+
+            hwnd_dc = win32gui.GetWindowDC(hwnd)
+            mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+            save_dc = mfc_dc.CreateCompatibleDC()
+
+            save_bitmap = win32ui.CreateBitmap()
+            save_bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+            save_dc.SelectObject(save_bitmap)
+
+            # ✅ IMPROVED: Try different PrintWindow flags
+            # First try: PW_RENDERFULLCONTENT alone (works better for some windows)
+            PW_RENDERFULLCONTENT = 2
+            result = win32gui.PrintWindow(hwnd, save_dc.GetSafeHdc(), PW_RENDERFULLCONTENT)
+
+            if result != 1:
+                # Second try: No flags (default behavior)
+                result = win32gui.PrintWindow(hwnd, save_dc.GetSafeHdc(), 0)
+                
+            if result != 1:
+                # Third try: PW_CLIENTONLY
+                PW_CLIENTONLY = 1
+                result = win32gui.PrintWindow(hwnd, save_dc.GetSafeHdc(), PW_CLIENTONLY)
+
+            if result != 1:
+                # PrintWindow failed with all attempts
+                logging.debug(f"SESSION {self.session_id}: PrintWindow failed with all flag combinations")
+                return None
+
+            bmp_info = save_bitmap.GetInfo()
+            bmp_str = save_bitmap.GetBitmapBits(True)
+            img = np.frombuffer(bmp_str, dtype=np.uint8)
+            img = img.reshape((bmp_info['bmHeight'], bmp_info['bmWidth'], 4))
+
+            # Convert BGRA to BGR for OpenCV - COPY data before cleanup
+            frame = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR).copy()
+            
+            return frame
+            
+        except Exception as e:
+            logging.debug(f"SESSION {self.session_id}: PrintWindow exception: {e}")
+            return None
+        
+        finally:
+            # ✅ CRITICAL: ALWAYS cleanup GDI objects, even if exception occurs
+            try:
+                if save_bitmap:
+                    win32gui.DeleteObject(save_bitmap.GetHandle())
+            except Exception:
+                pass
+            
+            try:
+                if save_dc:
+                    save_dc.DeleteDC()
+            except Exception:
+                pass
+                
+            try:
+                if mfc_dc:
+                    mfc_dc.DeleteDC()
+            except Exception:
+                pass
+                
+            try:
+                if hwnd_dc is not None:
+                    win32gui.ReleaseDC(hwnd, hwnd_dc)
+            except Exception:
+                pass
 
     def _sanitize_connection_info(self, connection_info: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -464,7 +656,22 @@ class SessionRecorder:
             remove_sensitive = True
             log_actions = True
 
+        # Define safe fields that should ALWAYS be kept (for identification)
+        safe_fields = {
+            "name",
+            "ip",
+            "host",
+            "hostname",
+            "server",
+            "port",
+            "connection_type",
+            "protocol",
+            "connection_name",
+            "server_name",
+        }
+
         # Define sensitive fields that should NOT be saved to disk/database
+        # IMPORTANT: Only exact field names, not partial matches!
         sensitive_fields = {
             "password",
             "senha",
@@ -472,7 +679,6 @@ class SessionRecorder:
             "pwd",
             "passwd",
             "passw",
-            "user",
             "username",
             "usuario",
             "login",
@@ -507,32 +713,21 @@ class SessionRecorder:
         for key, value in connection_info.items():
             key_lower = key.lower()
 
-            # Check if this field contains sensitive information
-            is_sensitive = any(sensitive_field in key_lower for sensitive_field in sensitive_fields)
-
-            if not is_sensitive or not remove_sensitive:
-                # Keep non-sensitive fields like: name, ip, port, connection_type, etc.
+            # PRIORITY 1: If it's in safe_fields, always keep it ✓
+            if key_lower in safe_fields:
                 sanitized[key] = value
+            # PRIORITY 2: Check if it's a sensitive field (exact match or key contains it)
+            elif key_lower in sensitive_fields or any(sensitive_field in key_lower for sensitive_field in sensitive_fields):
+                if remove_sensitive:
+                    # Replace sensitive data with protection placeholder
+                    sanitized[key] = "[PROTECTED_BY_SESSION_SECURITY]"
+                    sensitive_count += 1
+                else:
+                    # Keep it if removal is disabled
+                    sanitized[key] = value
             else:
-                # Replace sensitive data with protection placeholder
-                sanitized[key] = "[PROTECTED_BY_SESSION_SECURITY]"
-                sensitive_count += 1
-
-        # Always include some basic metadata for identification (if available)
-        safe_fields = [
-            "name",
-            "ip",
-            "host",
-            "hostname",
-            "server",
-            "port",
-            "connection_type",
-            "protocol",
-            "connection_name",
-        ]
-        for field in safe_fields:
-            if field in connection_info and field not in sanitized:
-                sanitized[field] = connection_info[field]
+                # Keep other fields as they are not sensitive
+                sanitized[key] = value
 
         # Add security protection metadata
         sanitized["_session_protection"] = {
@@ -574,16 +769,19 @@ class SessionRecorder:
 
             # Set up window tracking based on recording mode
             if self.recording_mode == "rdp_window":
-                # ⚡ RETRY LOGIC: Janela RDP pode demorar para aparecer (até 3s)
-                max_attempts = 6  # 6 tentativas × 0.5s = 3 segundos
+                # ⚡ RETRY LOGIC: RDP window may take time to appear (up to 5s)
+                max_attempts = 10  # 10 attempts × 0.5s = 5 seconds
                 self.target_window_handle = None
+                
+                logging.info(f"🔍 SESSION {session_id}: Searching for RDP window: {connection_info.get('name', 'Unknown')} ({connection_info.get('ip', 'N/A')})")
                 
                 for attempt in range(max_attempts):
                     self.target_window_handle = self._find_rdp_window(connection_info)
                     if self.target_window_handle:
+                        logging.info(f"✅ SESSION {session_id}: RDP window found on attempt {attempt + 1}/{max_attempts}")
                         break
                     if attempt < max_attempts - 1:
-                        logging.info(f"⏳ Aguardando janela RDP aparecer (tentativa {attempt + 1}/{max_attempts})...")
+                        logging.info(f"⏳ SESSION {session_id}: Waiting for RDP window (attempt {attempt + 1}/{max_attempts})...")
                         time.sleep(0.5)
                 
                 if self.target_window_handle:
@@ -592,22 +790,23 @@ class SessionRecorder:
                     if window_rect:
                         self._update_monitor_for_window(self.target_window_handle)
                         logging.info(
-                            f"✅ Gravando janela RDP (session {session_id}): "
-                            f"{window_rect['width']}x{window_rect['height']} "
-                            f"at monitor ({window_rect['left']}, {window_rect['top']})"
+                            f"✅ SESSION {session_id}: RDP-ONLY RECORDING CONFIGURED "
+                            f"📺 Window Size: {window_rect['width']}x{window_rect['height']} | "
+                            f"📍 Screen Position: ({window_rect['left']}, {window_rect['top']}) | "
+                            f"🔄 Window Tracking: ENABLED | "
+                            f"🚫 Non-RDP Exclusion: ENABLED | "
+                            f"🔢 Handle: {self.target_window_handle}"
                         )
                     else:
                         logging.warning(
-                            "RDP window found but not accessible/visible, using full screen"
+                            f"⚠️ SESSION {session_id}: RDP window found but rect is invalid - RDP-only mode will wait"
                         )
-                        self.recording_mode = "full_screen"
                         self.target_window_handle = None
-                        self.monitor = self._get_monitor_config()
                 else:
                     logging.warning(
-                        f"❌ RDP window not found after {max_attempts} attempts for session {session_id}, using full screen"
+                        f"❌ SESSION {session_id}: RDP window NOT found after {max_attempts} attempts - RDP-only mode will wait"
                     )
-                    self.recording_mode = "full_screen"  # Fallback
+                    self.target_window_handle = None
 
             elif self.recording_mode == "active_window":
                 self.target_window_handle = self._get_active_window()
@@ -664,18 +863,21 @@ class SessionRecorder:
             self.is_recording = False
             return False
 
-    def stop_recording(self) -> bool:
+    def stop_recording(self) -> Optional[str]:
         """
         Stop the current recording session.
 
         Returns:
-            True if recording stopped successfully, False otherwise
+            Path to the recorded video file if successful, None otherwise
         """
         if not self.is_recording:
             logging.warning("No recording in progress")
-            return False
+            return None
 
         try:
+            # Store the current file path before cleanup
+            video_path = str(self.current_file) if self.current_file else None
+            
             self.stop_event.set()
 
             if self.recording_thread and self.recording_thread.is_alive():
@@ -683,26 +885,51 @@ class SessionRecorder:
 
             self._cleanup_current_recording()
 
-            logging.info(f"Stopped recording session {self.session_id}")
+            logging.info(f"Stopped recording session {self.session_id} - Frames captured: {self.frames_captured}, Failed: {self.frames_failed}")
             self.session_id = None
             self.is_recording = False
-            return True
+            
+            return video_path
 
         except Exception as e:
             logging.error(f"Error stopping recording: {e}")
-            return False
+            return None
 
     def _recording_loop(self, session_id: str, connection_info: Dict[str, Any]):
-        """Main recording loop running in a separate thread."""
+        """
+        Main recording loop running in a separate thread.
+        ✅ MEMORY OPTIMIZED: Periodic garbage collection and efficient frame handling
+        """
+        import gc
+        
         # Create a new MSS instance for this thread to avoid thread-safety issues
         thread_sct = mss.mss()
 
         try:
+            # RDP-only: wait for a valid RDP window before starting capture
+            if self.recording_mode == "rdp_window":
+                while not self.stop_event.is_set():
+                    if self.target_window_handle and win32gui.IsWindow(self.target_window_handle):
+                        if self._update_monitor_for_window(self.target_window_handle):
+                            break
+                        self.target_window_handle = None
+                    self.target_window_handle = self._find_rdp_window(connection_info)
+                    if self.target_window_handle:
+                        if self._update_monitor_for_window(self.target_window_handle):
+                            break
+                        self.target_window_handle = None
+                    time.sleep(0.2)
+
+            if self.stop_event.is_set():
+                return
+
             self._create_new_video_file(session_id, connection_info)
 
             frame_interval = 1.0 / self.fps
             last_frame_time = time.time()
-
+            frames_since_gc = 0  # ✅ NEW: Track frames for periodic GC
+            gc_interval = 30  # Run GC every 30 frames
+            
             while not self.stop_event.is_set():
                 current_time = time.time()
 
@@ -710,6 +937,12 @@ class SessionRecorder:
                 if current_time - last_frame_time >= frame_interval:
                     self._capture_and_write_frame(thread_sct)
                     last_frame_time = current_time
+                    frames_since_gc += 1
+                    
+                    # ✅ MEMORY: Periodic garbage collection to free Python objects
+                    if frames_since_gc >= gc_interval:
+                        gc.collect(generation=0)  # Fast collection of youngest generation
+                        frames_since_gc = 0
 
                     # Check if we need to rotate the file
                     if self._should_rotate_file():
@@ -721,6 +954,9 @@ class SessionRecorder:
         except Exception as e:
             logging.error(f"Error in recording loop: {e}")
         finally:
+            # ✅ FINAL CLEANUP: Force garbage collection
+            gc.collect()
+            
             # Clean up thread-specific MSS instance
             try:
                 thread_sct.close()
@@ -729,52 +965,89 @@ class SessionRecorder:
             self._cleanup_current_recording()
 
     def _capture_and_write_frame(self, sct_instance):
-        """Capture a screen frame and write it to the video file."""
+        """
+        Capture a screen frame and write it to the video file.
+        
+        ✅ FEATURES FOR RDP-ONLY RECORDING:
+        - Records ONLY the RDP window (not other PC content)
+        - Tracks RDP window movement and continues recording
+        - Ignores non-RDP elements
+        ✅ MEMORY OPTIMIZED: Explicit memory cleanup after each frame
+        """
+        frame = None  # Initialize for cleanup
+        
         try:
             # Update window position if recording specific window
-            if self.recording_mode in ["rdp_window", "active_window"] and self.target_window_handle:
+            if self.recording_mode in ["rdp_window", "active_window"]:
                 try:
-                    # Check if window still exists and is visible
-                    if win32gui.IsWindow(self.target_window_handle) and win32gui.IsWindowVisible(
+                    if self.target_window_handle and win32gui.IsWindow(self.target_window_handle) and win32gui.IsWindowVisible(
                         self.target_window_handle
                     ):
-                        # Update monitor coordinates for window movement
-                        self._update_monitor_for_window(self.target_window_handle)
+                        if not self._update_monitor_for_window(self.target_window_handle):
+                            return
                     else:
-                        # Window no longer exists or visible, switch to full screen
-                        logging.warning(
-                            "Target window no longer available, switching to full screen"
+                        # RDP-only: try to re-find window, do not fall back to full screen
+                        self.target_window_handle = self._find_rdp_window(
+                            {
+                                "name": getattr(self, "current_connection_name", "Unknown"),
+                                "ip": getattr(self, "current_connection_ip", "Unknown"),
+                            }
                         )
-                        self.recording_mode = "full_screen"
-                        self.target_window_handle = None
-                        self.monitor = self._get_monitor_config()
+                        if not self.target_window_handle:
+                            return
+                        if not self._update_monitor_for_window(self.target_window_handle):
+                            return
                 except Exception as e:
-                    logging.error(f"Error checking window status: {e}")
-                    # Continue with last known position
+                    logging.error(f"Error checking RDP window status: {e}")
+                    return
 
-            # Capture screen/window using thread-specific MSS instance
-            screenshot = sct_instance.grab(self.monitor)
+            # Capture frame
+            if self.recording_mode == "rdp_window" and self.exclude_non_rdp_content:
+                frame = self._capture_rdp_window_frame(self.target_window_handle)
+                if frame is None:
+                    # ⚠️ HYBRID APPROACH: Use MSS as fallback (may capture overlays)
+                    # PrintWindow doesn't work with all RDP clients
+                    # Better to record with overlays than not record at all
+                    try:
+                        screenshot = sct_instance.grab(self.monitor)
+                        frame = np.array(screenshot)
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        self.frames_failed += 1  # Count as "failed" PrintWindow
+                        if self.frames_failed == 10:  # Log once after 10 failures
+                            logging.warning(f"SESSION {self.session_id}: PrintWindow not working with this RDP client - using MSS (may capture overlays)")
+                    except Exception as e:
+                        self.frames_failed += 1
+                        if self.frames_failed % 50 == 0:
+                            logging.error(f"SESSION {self.session_id}: Both PrintWindow and MSS failed {self.frames_failed} times")
+                        return
+                else:
+                    if self.frames_captured == 0:  # Log on first success
+                        logging.info(f"SESSION {self.session_id}: ✅ Using PrintWindow (no overlays)")
+            else:
+                # Capture screen/window using thread-specific MSS instance
+                screenshot = sct_instance.grab(self.monitor)
 
-            # Convert to numpy array
-            frame = np.array(screenshot)
+                # Convert to numpy array
+                frame = np.array(screenshot)
 
-            # Convert BGRA to BGR for OpenCV
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                # Convert BGRA to BGR for OpenCV
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
             # Resize if scaling is applied
             if self.resolution_scale != 1.0:
                 height, width = frame.shape[:2]
                 new_width = int(width * self.resolution_scale)
                 new_height = int(height * self.resolution_scale)
+                # ✅ MEMORY: Create resized frame and keep in same variable to release old frame
                 frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
             
             # Obtém dimensões finais do frame
             final_height, final_width = frame.shape[:2]
             
-            # Verifica se as dimensões mudaram (janela foi redimensionada ou movida)
+            # ✅ Verifica se as dimensões mudaram (janela RDP foi redimensionada ou movida)
             if self._check_window_dimension_change(final_width, final_height):
                 logging.warning(
-                    f"⚠️ Dimensões mudaram durante gravação! "
+                    f"⚠️ RDP Window dimensões mudaram durante gravação! "
                     f"Recriando VideoWriter para evitar erro 'FFmpeg: Failed to write frame'"
                 )
                 
@@ -794,10 +1067,14 @@ class SessionRecorder:
             if self.current_writer:
                 try:
                     self.current_writer.write(frame)
+                    self.frames_captured += 1
+                    if self.frames_captured % 100 == 0:  # Log every 100 frames
+                        logging.info(f"SESSION {self.session_id}: ✅ {self.frames_captured} frames recorded")
                 except Exception as write_error:
+                    self.frames_failed += 1
                     logging.error(
                         f"❌ Erro ao escrever frame (FFmpeg/OpenCV): {write_error}. "
-                        f"Dimensões do frame: {final_width}x{final_height}",
+                        f"Dimensões do frame: {final_width}x{final_height}. Failed: {self.frames_failed}",
                         exc_info=True,
                     )
 
@@ -830,6 +1107,11 @@ class SessionRecorder:
 
         except Exception as e:
             logging.error(f"Error capturing frame: {e}")
+        
+        finally:
+            # ✅ MEMORY: Explicitly delete frame to free memory immediately
+            if frame is not None:
+                del frame
 
     def _create_new_video_file(self, session_id: str, connection_info: Dict[str, Any]):
         """Create a new video file for recording."""
@@ -912,8 +1194,14 @@ class SessionRecorder:
         """Clean up the current recording resources."""
         try:
             if self.current_writer:
+                # ✅ CRITICAL: Ensure VideoWriter is properly released to write file headers
+                logging.debug(f"Releasing VideoWriter for: {self.current_file}")
                 self.current_writer.release()
                 self.current_writer = None
+                logging.debug(f"VideoWriter released successfully")
+                
+                # Give OS time to flush buffers
+                time.sleep(0.1)
 
             self.current_file = None
             self.recording_start_time = None

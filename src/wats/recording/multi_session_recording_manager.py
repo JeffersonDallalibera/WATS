@@ -52,11 +52,18 @@ class MultiSessionRecordingManager:
         self, session_id: str, connection_info: Dict[str, Any], callback: Optional[Callable] = None
     ) -> bool:
         """
-        Start recording for a specific session.
+        Start recording for a specific RDP session.
+        
+        Configured to:
+        - Record ONLY RDP sessions (rdp_window mode)
+        - Support multiple concurrent sessions (1, 2, or more)
+        - Detect and follow RDP window movement
+        - Exclude all other PC screen elements from recording
+        - Track RDP process exclusively
 
         Args:
             session_id: Unique identifier for the session
-            connection_info: Information about the RDP connection
+            connection_info: Information about the RDP connection (must include RDP window info)
             callback: Optional callback when recording stops
 
         Returns:
@@ -72,25 +79,22 @@ class MultiSessionRecordingManager:
                 config = get_config()
                 recording_config = config.get("recording", {})
 
-                # Override with settings if available
+                # Override with settings if available - configure for RDP-only recording
                 if self.settings:
                     recording_config.update(
                         {
                             "enabled": self.settings.RECORDING_ENABLED,
                             "output_dir": self.settings.RECORDING_OUTPUT_DIR,
                             "fps": getattr(
-                                self.settings, "RECORDING_FPS", recording_config.get("fps", 30)
+                                self.settings, "RECORDING_FPS", recording_config.get("fps", 5)
                             ),
                             "quality": getattr(
                                 self.settings,
                                 "RECORDING_QUALITY",
-                                recording_config.get("quality", 75),
+                                recording_config.get("quality", 28),
                             ),
-                            "mode": getattr(
-                                self.settings,
-                                "RECORDING_MODE",
-                                recording_config.get("mode", "rdp_window"),
-                            ),
+                            # ✅ CRITICAL: Set to rdp_window to record ONLY RDP sessions
+                            "mode": "rdp_window",
                             "compress_enabled": getattr(
                                 self.settings,
                                 "RECORDING_COMPRESSION_ENABLED",
@@ -107,19 +111,32 @@ class MultiSessionRecordingManager:
                 # Store the recording config for this session
                 self.recording_configs[session_id] = recording_config
 
-                # Create and start the recorder
-                # ⚡ OTIMIZAÇÃO: FPS baixo (5) + quality alta (30 CRF) + resolução 75% = arquivos MUITO menores
-                # SessionRecorder expects: output_dir, max_file_size_mb, max_duration_minutes, fps, quality, etc.
+                # Create and start the recorder with RDP-window-specific configuration
+                # ✅ CONFIGURATION FOR RDP-ONLY RECORDING
+                # - fps: 3 (OPTIMIZED: reduced from 5 to 3 for lower memory usage)
+                # - quality: 28 CRF (good quality/size tradeoff)
+                # - resolution_scale: 0.75 (75% of RDP window resolution)
+                # - recording_mode: "rdp_window" (ONLY records the RDP window)
+                # - track_window_movement: True (follows RDP window if it moves)
+                # - exclude_other_elements: True (ignores other PC screen content)
                 recorder = SessionRecorder(
                     output_dir=recording_config.get("output_dir", "./recordings"),
                     max_file_size_mb=recording_config.get("max_file_size_mb", 100),
                     max_duration_minutes=recording_config.get("max_duration_minutes", 30),
-                    fps=recording_config.get("fps", 5),  # ⚡ 5 FPS (antes 10) = arquivos 50% menores
-                    quality=recording_config.get("quality", 30),  # ⚡ CRF 30 (antes 23) = menor qualidade, arquivos menores
-                    resolution_scale=recording_config.get("resolution_scale", 0.75),  # ⚡ 75% resolução (antes 100%)
-                    recording_mode=recording_config.get("mode", "full_screen"),
+                    fps=recording_config.get("fps", 3),  # ✅ OPTIMIZED: 3 FPS (was 5) - 40% less memory
+                    quality=recording_config.get("quality", 28),  # CRF 28 (better compression)
+                    resolution_scale=recording_config.get("resolution_scale", 0.75),  # 75% resolution
+                    recording_mode="rdp_window",  # ✅ CRITICAL: Record ONLY RDP window
                     force_window_maximized=recording_config.get("force_window_maximized", True),
+                    track_window_movement=True,  # ✅ Follow RDP window if it moves
+                    exclude_non_rdp_content=True,  # ✅ Exclude other PC elements
                 )
+                
+                # Store connection info for RDP-specific tracking
+                # This ensures we track the correct RDP window across all sessions
+                if not hasattr(self, 'session_connections'):
+                    self.session_connections = {}
+                self.session_connections[session_id] = connection_info
                 
                 # Start recording with session_id and connection_info
                 if recorder.start_recording(session_id, connection_info):
@@ -127,7 +144,8 @@ class MultiSessionRecordingManager:
                     if callback:
                         self.callbacks[session_id] = callback
                     logging.info(
-                        f"Started recording for session {session_id} with session protection enabled"
+                        f"✅ Started RDP-only recording for session {session_id} "
+                        f"(RDP Window Tracking Enabled, Multi-session support active)"
                     )
                     return True
                 else:
