@@ -168,8 +168,13 @@ class SessionRecorder:
         Returns:
             True se houve mudança significativa
         """
+        # ✅ CRITICAL FIX: These are now initialized in _create_new_video_file()
+        # so we should NEVER have None values here. But keep check for safety.
         if self.last_frame_width is None or self.last_frame_height is None:
-            # Primeira captura, armazena dimensões
+            logging.warning(
+                f"⚠️ Dimension tracking not initialized (should have been in _create_new_video_file). "
+                f"Initializing now: {current_width}x{current_height}"
+            )
             self.last_frame_width = current_width
             self.last_frame_height = current_height
             return False
@@ -1151,9 +1156,18 @@ class SessionRecorder:
             if not self.current_writer or not self.current_writer.isOpened():
                 raise Exception(f"Failed to open VideoWriter (tried: {tried_codecs})")
 
-            # Store writer dimensions to prevent unexpected mismatches
+            # ✅ CRITICAL FIX: Initialize dimension tracking IMMEDIATELY after creating writer
+            # This prevents spurious dimension changes on first frame capture
+            # Without this, the first frame causes _check_window_dimension_change() to
+            # trigger _recreate_video_writer(), creating a second output file with only 1 second of video
             self.last_frame_width = int(width)
             self.last_frame_height = int(height)
+            self.dimension_change_count = 0
+            
+            logging.debug(
+                f"✅ Initialized dimension tracking: {self.last_frame_width}x{self.last_frame_height} "
+                f"(prevents spurious recreation on first frame)"
+            )
 
         except Exception as e:
             logging.error(f"Error creating video file: {e}", exc_info=True)
