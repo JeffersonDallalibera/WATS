@@ -5,6 +5,9 @@ import logging
 import shutil
 import subprocess
 import threading
+from typing import Iterable
+
+from ..utils.process_monitor import RdpProcessMonitor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -25,6 +28,7 @@ class MultiSessionRecordingManager:
         self.callbacks: Dict[str, Callable] = {}
         self._lock = threading.Lock()
         self.settings = None
+        self.process_monitor = RdpProcessMonitor()
 
         logging.info("MultiSessionRecordingManager initialized")
 
@@ -47,6 +51,27 @@ class MultiSessionRecordingManager:
         except Exception as e:
             logging.error(f"Failed to initialize MultiSessionRecordingManager: {e}")
             return False
+
+    def _is_rdp_process_active(self, connection_info: Dict[str, Any]) -> bool:
+        """
+        Validate if an RDP process is active using the shared process monitor.
+        Recording only starts AFTER the [PROCESS_CHECK] log is emitted.
+        """
+        server_ip = connection_info.get("ip", "")
+        title = connection_info.get("name", "")
+        user = connection_info.get("user") or connection_info.get("username")
+
+        try:
+            return self.process_monitor.is_rdp_process_active(
+                server_ip=server_ip,
+                user=user,
+                title=title,
+                tolerance_seconds=10,
+            )
+        except Exception as e:
+            logging.warning(f"[PROCESS_CHECK] Falha ao validar processo RDP: {e}")
+            # Fail open to avoid blocking recording on monitoring errors
+            return True
 
     def start_session_recording(
         self, session_id: str, connection_info: Dict[str, Any], callback: Optional[Callable] = None
@@ -72,6 +97,13 @@ class MultiSessionRecordingManager:
         with self._lock:
             if session_id in self.active_recordings:
                 logging.warning(f"Recording already active for session {session_id}")
+                return False
+
+            # ✅ PROCESS CHECK: Only start recording if an RDP process is active
+            if not self._is_rdp_process_active(connection_info):
+                logging.warning(
+                    f"SESSION {session_id}: Recording not started (no active RDP process)"
+                )
                 return False
 
             try:

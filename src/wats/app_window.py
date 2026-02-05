@@ -1484,6 +1484,26 @@ class Application(ctk.CTk):
                     if recording_session_id and recording_connection_info and self.recording_manager:
                         def start_recording_async():
                             try:
+                                # ✅ GARANTIA: só inicia gravação APÓS log [PROCESS_CHECK] ✓
+                                rdp_monitor = get_rdp_monitor()
+                                process_ready = False
+                                for attempt in range(6):
+                                    if rdp_monitor.is_rdp_process_active(
+                                        server_ip=server_ip,
+                                        user=rdp_user,
+                                        title=connection_title,
+                                        tolerance_seconds=10,
+                                    ):
+                                        process_ready = True
+                                        break
+                                    time.sleep(0.5)
+
+                                if not process_ready:
+                                    logging.warning(
+                                        f"[RECORDING] ❌ Processo RDP não confirmado; gravação não iniciada para {data.get('ip')}"
+                                    )
+                                    return
+
                                 if self.recording_manager.start_session_recording(
                                     recording_session_id, recording_connection_info
                                 ):

@@ -97,6 +97,14 @@ class SessionRecorder:
         self.last_frame_height: Optional[int] = None
         self.dimension_change_count: int = 0
         self.force_window_maximized: bool = True  # Força janela maximizada para evitar problemas
+
+        # Minimum capture size to consider the RDP window "established"
+        self.min_capture_width: int = 320
+        self.min_capture_height: int = 200
+
+        # FFmpeg fallback (when OpenCV VideoWriter is unavailable)
+        self.ffmpeg_process = None
+        self.ffmpeg_stdin = None
         
         # Frame capture statistics
         self.frames_captured: int = 0
@@ -133,6 +141,90 @@ class SessionRecorder:
             "width": monitor["width"],
             "height": monitor["height"],
         }
+
+    def _is_valid_capture_size(self, width: int, height: int) -> bool:
+        """Validate capture size to avoid tiny/invalid windows before starting recording."""
+        return width >= self.min_capture_width and height >= self.min_capture_height
+
+    def _normalize_dimensions(self, width: int, height: int) -> tuple[int, int]:
+        """Ensure dimensions are even (required by some codecs) and >= minimum size."""
+        width = int(width)
+        height = int(height)
+        if width % 2 != 0:
+            width -= 1
+        if height % 2 != 0:
+            height -= 1
+        return max(width, self.min_capture_width), max(height, self.min_capture_height)
+
+    def _try_open_video_writer(
+        self,
+        file_path: Path,
+        fps: int,
+        size: tuple[int, int],
+        codecs: tuple[str, ...],
+        api_prefs: tuple[int, ...],
+    ) -> tuple[Optional[cv2.VideoWriter], list[str]]:
+        """Try to open VideoWriter with multiple APIs/codecs and return writer + tried list."""
+        tried = []
+        for api in api_prefs:
+            for codec in codecs:
+                tried.append(codec)
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                writer = cv2.VideoWriter(str(file_path), api, fourcc, fps, size)
+                if writer.isOpened():
+                    return writer, tried
+        return None, tried
+
+    def _start_ffmpeg_writer(
+        self,
+        width: int,
+        height: int,
+        session_id: str,
+        connection_info: Dict[str, Any],
+        timestamp: str,
+    ) -> bool:
+        """Start ffmpeg fallback writer using raw frames piped to stdin."""
+        try:
+            import shutil
+            import subprocess
+
+            ffmpeg_path = shutil.which("ffmpeg")
+            if not ffmpeg_path:
+                logging.error("FFmpeg not found in PATH - cannot fallback to ffmpeg writer")
+                return False
+
+            connection_name = connection_info.get("name", "Unknown").replace(" ", "_")
+            filename = f"{session_id}_{connection_name}_{timestamp}_ffmpeg.avi"
+            self.current_file = self.output_dir / filename
+
+            # Use MPEG-4 encoder (built-in) to avoid OpenH264 dependency
+            cmd = [
+                ffmpeg_path,
+                "-y",
+                "-f", "rawvideo",
+                "-pix_fmt", "bgr24",
+                "-s", f"{width}x{height}",
+                "-r", str(self.fps),
+                "-i", "-",
+                "-an",
+                "-vcodec", "mpeg4",
+                "-q:v", "5",
+                str(self.current_file),
+            ]
+
+            self.ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self.ffmpeg_stdin = self.ffmpeg_process.stdin
+            logging.info(f"⚡ FFmpeg fallback writer started: {self.current_file}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Failed to start FFmpeg fallback writer: {e}")
+            return False
 
     def _try_restore_window(self, hwnd: int) -> bool:
         """
@@ -230,17 +322,27 @@ class SessionRecorder:
             
             self.current_file = self.output_dir / filename
             
+            # Normalize dimensions for codec compatibility
+            width, height = self._normalize_dimensions(width, height)
+
             # ⚡ OTIMIZAÇÃO: Cria VideoWriter com codecs rápidos (MJPEG primeiro)
-            tried_codecs = []
-            for codec in ("MJPG", "XVID", "mp4v"):  # MJPEG é o mais rápido
-                tried_codecs.append(codec)
-                fourcc = cv2.VideoWriter_fourcc(*codec)
-                self.current_writer = cv2.VideoWriter(
-                    str(self.current_file), fourcc, self.fps, (width, height)
-                )
-                if self.current_writer.isOpened():
-                    logging.info(f"✅ Novo VideoWriter AVI criado com codec {codec}: {self.current_file}")
-                    break
+            api_candidates = []
+            for api_name in ("CAP_FFMPEG", "CAP_MSMF", "CAP_DSHOW", "CAP_ANY"):
+                api_val = getattr(cv2, api_name, None)
+                if api_val is not None:
+                    api_candidates.append(api_val)
+            api_prefs = tuple(api_candidates) if api_candidates else (0,)
+
+            self.current_writer, tried_codecs = self._try_open_video_writer(
+                self.current_file,
+                self.fps,
+                (width, height),
+                ("MJPG", "XVID", "mp4v", "I420", "DIB "),
+                api_prefs,
+            )
+
+            if self.current_writer and self.current_writer.isOpened():
+                logging.info(f"✅ Novo VideoWriter AVI criado: {self.current_file}")
 
             if not self.current_writer or not self.current_writer.isOpened():
                 raise Exception(f"Failed to open new VideoWriter (tried: {tried_codecs})")
@@ -913,22 +1015,43 @@ class SessionRecorder:
         try:
             # RDP-only: wait for a valid RDP window before starting capture
             if self.recording_mode == "rdp_window":
+                # ✅ Wait for a VALID RDP window size before starting recording
                 while not self.stop_event.is_set():
                     if self.target_window_handle and win32gui.IsWindow(self.target_window_handle):
                         if self._update_monitor_for_window(self.target_window_handle):
-                            break
-                        self.target_window_handle = None
+                            if self._is_valid_capture_size(
+                                self.monitor["width"], self.monitor["height"]
+                            ):
+                                break
                     self.target_window_handle = self._find_rdp_window(connection_info)
                     if self.target_window_handle:
                         if self._update_monitor_for_window(self.target_window_handle):
-                            break
+                            if self._is_valid_capture_size(
+                                self.monitor["width"], self.monitor["height"]
+                            ):
+                                break
                         self.target_window_handle = None
                     time.sleep(0.2)
 
             if self.stop_event.is_set():
                 return
 
-            self._create_new_video_file(session_id, connection_info)
+            # ✅ Only create VideoWriter after a valid capture region exists
+            max_writer_attempts = 5
+            created = False
+            for attempt in range(1, max_writer_attempts + 1):
+                if self._create_new_video_file(session_id, connection_info):
+                    created = True
+                    break
+                logging.error(
+                    f"Error creating video file (attempt {attempt}/{max_writer_attempts})"
+                )
+                if attempt < max_writer_attempts:
+                    time.sleep(1.0)
+
+            if not created:
+                logging.error("Recording aborted: no available VideoWriter/FFmpeg backend")
+                return
 
             frame_interval = 1.0 / self.fps
             last_frame_time = time.time()
@@ -1110,6 +1233,19 @@ class SessionRecorder:
                     except Exception as recreate_exc:
                         logging.error(f"Falha ao recriar VideoWriter: {recreate_exc}", exc_info=True)
 
+            elif self.ffmpeg_process and self.ffmpeg_stdin:
+                try:
+                    self.ffmpeg_stdin.write(frame.tobytes())
+                    self.frames_captured += 1
+                    if self.frames_captured % 100 == 0:
+                        logging.info(f"SESSION {self.session_id}: ✅ {self.frames_captured} frames recorded (ffmpeg)")
+                except Exception as write_error:
+                    self.frames_failed += 1
+                    logging.error(
+                        f"❌ Erro ao escrever frame (FFmpeg pipe): {write_error}. Failed: {self.frames_failed}",
+                        exc_info=True,
+                    )
+
         except Exception as e:
             logging.error(f"Error capturing frame: {e}")
         
@@ -1118,8 +1254,8 @@ class SessionRecorder:
             if frame is not None:
                 del frame
 
-    def _create_new_video_file(self, session_id: str, connection_info: Dict[str, Any]):
-        """Create a new video file for recording."""
+    def _create_new_video_file(self, session_id: str, connection_info: Dict[str, Any]) -> bool:
+        """Create a new video file for recording. Returns True on success."""
         try:
             # Generate filename with timestamp
             # ⚡ OTIMIZAÇÃO: Grava em .AVI primeiro (mais rápido) - será comprimido para .mp4 depois
@@ -1138,23 +1274,62 @@ class SessionRecorder:
                 width = int(width * self.resolution_scale)
                 height = int(height * self.resolution_scale)
 
+            # Normalize dimensions for codec compatibility
+            width, height = self._normalize_dimensions(width, height)
+
             # ⚡ OTIMIZAÇÃO: Create VideoWriter with fast AVI codecs (MJPEG primeiro - mais rápido)
             # Será comprimido para H.264/MP4 depois pelo MultiSessionRecordingManager
-            tried_codecs = []
-            for codec in ("MJPG", "XVID", "mp4v"):  # MJPEG é o mais rápido para AVI
-                tried_codecs.append(codec)
-                fourcc = cv2.VideoWriter_fourcc(*codec)
-                self.current_writer = cv2.VideoWriter(
-                    str(self.current_file), fourcc, self.fps, (width, height)
+            api_candidates = []
+            for api_name in ("CAP_FFMPEG", "CAP_MSMF", "CAP_DSHOW", "CAP_ANY"):
+                api_val = getattr(cv2, api_name, None)
+                if api_val is not None:
+                    api_candidates.append(api_val)
+            api_prefs = tuple(api_candidates) if api_candidates else (0,)
+
+            self.current_writer, tried_codecs = self._try_open_video_writer(
+                self.current_file,
+                self.fps,
+                (width, height),
+                ("MJPG", "XVID", "mp4v", "I420", "DIB "),
+                api_prefs,
+            )
+
+            if self.current_writer and self.current_writer.isOpened():
+                logging.info(
+                    f"⚡ Created AVI file (fast write): {self.current_file} (dimensions: {width}x{height})"
                 )
-                if self.current_writer.isOpened():
+
+            # ✅ Fallback: if AVI codecs fail, try MP4 container with compatible codecs
+            if not self.current_writer or not self.current_writer.isOpened():
+                fallback_filename = f"{session_id}_{connection_name}_{timestamp}.mp4"
+                self.current_file = self.output_dir / fallback_filename
+                self.current_writer, tried_codecs = self._try_open_video_writer(
+                    self.current_file,
+                    self.fps,
+                    (width, height),
+                    ("mp4v",),
+                    api_prefs,
+                )
+                if self.current_writer and self.current_writer.isOpened():
                     logging.info(
-                        f"⚡ Created AVI file (fast write): {self.current_file} (dimensions: {width}x{height}, codec={codec})"
+                        f"⚡ Created MP4 fallback file: {self.current_file} (dimensions: {width}x{height})"
                     )
-                    break
+
+            # ✅ Final fallback: FFmpeg pipe writer (if available)
+            if not self.current_writer or not self.current_writer.isOpened():
+                if self._start_ffmpeg_writer(width, height, session_id, connection_info, timestamp):
+                    # Initialize dimensions for ffmpeg writer too
+                    self.last_frame_width = int(width)
+                    self.last_frame_height = int(height)
+                    self.dimension_change_count = 0
+                    logging.debug(
+                        f"✅ Initialized dimension tracking (ffmpeg): {self.last_frame_width}x{self.last_frame_height}"
+                    )
+                    return True
 
             if not self.current_writer or not self.current_writer.isOpened():
-                raise Exception(f"Failed to open VideoWriter (tried: {tried_codecs})")
+                logging.error(f"Failed to open VideoWriter (tried: {tried_codecs})")
+                return False
 
             # ✅ CRITICAL FIX: Initialize dimension tracking IMMEDIATELY after creating writer
             # This prevents spurious dimension changes on first frame capture
@@ -1169,9 +1344,11 @@ class SessionRecorder:
                 f"(prevents spurious recreation on first frame)"
             )
 
+            return True
+
         except Exception as e:
             logging.error(f"Error creating video file: {e}", exc_info=True)
-            raise
+            return False
 
     def _should_rotate_file(self) -> bool:
         """Check if the current file should be rotated."""
@@ -1200,7 +1377,8 @@ class SessionRecorder:
         """Rotate to a new video file."""
         try:
             self._cleanup_current_recording()
-            self._create_new_video_file(session_id, connection_info)
+            if not self._create_new_video_file(session_id, connection_info):
+                logging.error("Rotation failed: no available VideoWriter/FFmpeg backend")
         except Exception as e:
             logging.error(f"Error rotating video file: {e}")
 
@@ -1219,6 +1397,22 @@ class SessionRecorder:
 
             self.current_file = None
             self.recording_start_time = None
+
+            # ✅ Cleanup FFmpeg fallback
+            try:
+                if self.ffmpeg_stdin:
+                    self.ffmpeg_stdin.close()
+                if self.ffmpeg_process:
+                    self.ffmpeg_process.wait(timeout=2)
+            except Exception:
+                try:
+                    if self.ffmpeg_process:
+                        self.ffmpeg_process.terminate()
+                except Exception:
+                    pass
+            finally:
+                self.ffmpeg_stdin = None
+                self.ffmpeg_process = None
 
         except Exception as e:
             logging.error(f"Error cleaning up recording: {e}")
