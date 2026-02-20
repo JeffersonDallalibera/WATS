@@ -1,5 +1,3 @@
-# WATS_Project/wats_app/app_window.py (Com Atualização Diferencial)
-
 import json
 import logging
 import os

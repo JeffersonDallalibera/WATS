@@ -300,6 +300,7 @@ class Settings:
         # Carrega diferentes grupos de configurações
         self._load_database_settings()
         self._load_recording_settings()
+        self._load_performance_settings()
         
         # Log das configurações carregadas
         self._log_loaded_settings()
@@ -399,6 +400,43 @@ class Settings:
         
         self.RECORDING_OUTPUT_DIR = recording_output_dir if recording_output_dir else default_recording_dir
 
+    def _load_performance_settings(self):
+        """Carrega configurações de performance e tuning de runtime."""
+        self.PERF_MAX_CPU_USAGE_PERCENT = self._get_int_config(
+            ["performance", "max_cpu_usage_percent"], "PERF_MAX_CPU_USAGE_PERCENT", 80
+        )
+        self.PERF_MEMORY_LIMIT_MB = self._get_int_config(
+            ["performance", "memory_limit_mb"], "PERF_MEMORY_LIMIT_MB", 1024
+        )
+        self.PERF_DISK_SPACE_CHECK_ENABLED = self._get_bool_config(
+            ["performance", "disk_space_check_enabled"], "PERF_DISK_SPACE_CHECK_ENABLED", True
+        )
+        self.PERF_MIN_FREE_SPACE_GB = self._get_float_config(
+            ["performance", "min_free_space_gb"], "PERF_MIN_FREE_SPACE_GB", 5.0
+        )
+        self.PERF_BACKGROUND_CLEANUP_ENABLED = self._get_bool_config(
+            ["performance", "background_cleanup_enabled"],
+            "PERF_BACKGROUND_CLEANUP_ENABLED",
+            True,
+        )
+        self.PERF_OPTIMIZE_FOR_BATTERY = self._get_bool_config(
+            ["performance", "optimize_for_battery"], "PERF_OPTIMIZE_FOR_BATTERY", False
+        )
+
+        # Tuning efetivo para runtime (pool/cache)
+        self.PERF_DB_POOL_SIZE = self._get_int_config(
+            ["performance", "db_pool_size"], "PERF_DB_POOL_SIZE", 5
+        )
+        self.PERF_DB_MAX_OVERFLOW = self._get_int_config(
+            ["performance", "db_max_overflow"], "PERF_DB_MAX_OVERFLOW", 10
+        )
+        self.PERF_CACHE_TTL_SECONDS = self._get_int_config(
+            ["performance", "cache_ttl_seconds"], "PERF_CACHE_TTL_SECONDS", 300
+        )
+        self.PERF_CACHE_MAX_SIZE = self._get_int_config(
+            ["performance", "cache_max_size"], "PERF_CACHE_MAX_SIZE", 1000
+        )
+
 
 
     def _log_loaded_settings(self):
@@ -416,6 +454,12 @@ class Settings:
         logging.debug(
             f"Recording limits: FILE_SIZE={self.RECORDING_MAX_FILE_SIZE_MB}MB, "
             f"DURATION={self.RECORDING_MAX_DURATION_MINUTES}min, TOTAL_SIZE={self.RECORDING_MAX_TOTAL_SIZE_GB}GB"
+        )
+        logging.debug(
+            "Performance settings: "
+            f"POOL_SIZE={self.PERF_DB_POOL_SIZE}, OVERFLOW={self.PERF_DB_MAX_OVERFLOW}, "
+            f"CACHE_TTL={self.PERF_CACHE_TTL_SECONDS}s, CACHE_MAX_SIZE={self.PERF_CACHE_MAX_SIZE}, "
+            f"CPU_LIMIT={self.PERF_MAX_CPU_USAGE_PERCENT}%, MEM_LIMIT={self.PERF_MEMORY_LIMIT_MB}MB"
         )
 
     def has_db_config(self) -> bool:

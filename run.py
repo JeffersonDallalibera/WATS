@@ -234,7 +234,7 @@ def main():
         except BaseException:
             pass
         sys.exit(1)
-    # --- FIM NOVO ---
+    
 
     # --- Continua somente se consent_given for True ---
     logging.info("Iniciando aplicação WATS (após consentimento)...")
