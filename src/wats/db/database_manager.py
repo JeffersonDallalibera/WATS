@@ -98,9 +98,12 @@ class DatabaseManager:
 
         # Assign the imported module only when SQL Server is configured
         self.driver_module = pyodbc
+        db_port = (s.DB_PORT or "").strip() if hasattr(s, "DB_PORT") else ""
+        server_with_port = f"{s.DB_SERVER},{db_port}" if db_port else s.DB_SERVER
+
         self.connection_string = (
             f"DRIVER={{SQL Server}};"
-            f"SERVER={s.DB_SERVER};"
+            f"SERVER={server_with_port};"
             f"DATABASE={s.DB_DATABASE};"
             f"UID={s.DB_UID};"
             f"PWD={s.DB_PWD};"

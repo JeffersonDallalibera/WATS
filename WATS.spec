@@ -4,7 +4,7 @@ import os
 
 datas = [('assets', 'assets'), ('config.json', '.'), ('config/config.json', '.'), ('config/.env', '.'), ('wats_settings.json', '.')]
 binaries = []
-hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'dotenv', 'mss', 'psutil']
+hiddenimports = ['win32api', 'win32con', 'win32gui', 'win32process', 'dotenv', 'mss', 'psutil', 'cv2']
 
 # CustomTkinter com inclusão específica de recursos
 tmp_ret = collect_all('customtkinter')

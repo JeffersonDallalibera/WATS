@@ -31,13 +31,6 @@
     "auto_rotation": true,
     "retention_days": 30
   },
-  "api": {
-    "enabled": true,
-    "base_url": "${STAGING_API_URL}",
-    "api_key": "${STAGING_API_KEY}",
-    "timeout": 20,
-    "retry_attempts": 2
-  },
   "ui": {
     "theme": "dark",
     "auto_refresh_interval": 30,

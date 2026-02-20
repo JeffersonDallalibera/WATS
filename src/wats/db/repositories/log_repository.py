@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Any
 from src.wats.db.exceptions import DatabaseConnectionError
 from src.wats.db.repositories.base_repository import BaseRepository
 from src.wats.util_cache.cache import cached, invalidate_cache
+from src.wats.performance import invalidate_connection_caches
 
 
 class LogRepository(BaseRepository):
@@ -271,6 +272,59 @@ class LogRepository(BaseRepository):
             logging.error(f"Erro ao registrar fim do log de acesso ID {log_id}: {e}")
             return False
 
+    def close_open_access_logs_for_user(
+        self, con_codigo: int, username: str, computer_name: Optional[str] = None
+    ) -> int:
+        """
+        Finaliza logs de acesso em aberto para um usuário em uma conexão.
+
+        Se computer_name for fornecido, fecha apenas o registro exato (username@computer_name).
+        Caso contrário, fecha todos os registros cujo Usu_Nome_Maquina comece com "username@".
+
+        Returns:
+            Número de logs atualizados.
+        """
+        if computer_name:
+            user_machine = f"{username}@{computer_name}"
+            query = (
+                f"UPDATE Log_Acesso_WTS "
+                f"SET Log_DataHora_Fim = {self.db.NOW} "
+                f"WHERE Con_Codigo = {self.db.PARAM} "
+                f"AND Usu_Nome_Maquina = {self.db.PARAM} "
+                f"AND Log_DataHora_Fim IS NULL"
+            )
+            params = (con_codigo, user_machine)
+        else:
+            user_pattern = f"{username}@%"
+            query = (
+                f"UPDATE Log_Acesso_WTS "
+                f"SET Log_DataHora_Fim = {self.db.NOW} "
+                f"WHERE Con_Codigo = {self.db.PARAM} "
+                f"AND Usu_Nome_Maquina LIKE {self.db.PARAM} "
+                f"AND Log_DataHora_Fim IS NULL"
+            )
+            params = (con_codigo, user_pattern)
+
+        try:
+            with self.db.get_cursor() as cursor:
+                if not cursor:
+                    raise DatabaseConnectionError("Falha ao obter cursor.")
+                cursor.execute(query, params)
+                rows_affected = cursor.rowcount
+                if rows_affected > 0:
+                    self._invalidate_log_caches()
+                    logging.info(
+                        f"Finalizados {rows_affected} log(s) de acesso em aberto para "
+                        f"{username} (conexao {con_codigo})."
+                    )
+                return rows_affected
+        except self.driver_module.Error as e:
+            logging.error(
+                f"Erro ao finalizar logs de acesso em aberto para {username} "
+                f"(conexao {con_codigo}): {e}"
+            )
+            return 0
+
     # ==================== Métodos de Consulta com Cache ====================
     
     @cached(namespace="logs", ttl=60)
@@ -361,3 +415,4 @@ class LogRepository(BaseRepository):
     def _invalidate_log_caches(self):
         """Invalida todos os caches relacionados a logs."""
         invalidate_cache(namespace="logs")
+        invalidate_connection_caches()

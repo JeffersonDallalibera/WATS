@@ -27,7 +27,7 @@ class ManageConnectionDialog(ctk.CTkToplevel):
         self.connection_types = ["RDP", "AnyDesk", "TeamViewer"]
 
         self.title("Gerenciar Conexões (Bases)")
-        self.geometry("1000x950")
+        self.geometry("1500x900")
 
         self.grid_columnconfigure(0, weight=1)  # Coluna da Treeview
         self.grid_columnconfigure(1, weight=2)  # Coluna do Formulário

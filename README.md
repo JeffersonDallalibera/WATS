@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/BUILD_MULTIPLATFORM.md)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-lightgrey.svg)](docs/README.md)
 [![Version](https://img.shields.io/badge/version-4.2-green.svg)](CHANGELOG.md)
 
 **WATS** é uma solução empresarial completa para gerenciamento centralizado de conexões RDP, com gravação automática de sessões, proteção avançada contra desconexões, auditoria detalhada e sistema de permissões granular — projetado para ambientes corporativos multiplataforma (Windows e Linux).
@@ -445,34 +445,18 @@ LOG_LEVEL=INFO
 
 ## 📚 Documentação Completa
 
-### Guias de Instalação e Configuração
+### Índice oficial de documentação
 
-- **[📖 Configuração Completa](docs/CONFIGURACAO.md)** - Guia detalhado de todas as configurações
-- **[🗄️ Instalação do Banco de Dados](docs/DATABASE_INSTALLATION.md)** - Setup SQL Server e PostgreSQL
-- **[🔧 Configuração SQL Server](docs/SQL_SERVER_CONFIG.md)** - Otimizações específicas
-- **[📊 Índices do Banco](docs/DATABASE_INDEX_EXECUTION_GUIDE.md)** - Otimização de queries
+- **[📘 docs/README.md](docs/README.md)** - índice central atualizado.
 
-### Funcionalidades Específicas
+### Manutenção e operação
 
-- **[🔒 Sistema de Proteção de Sessões](docs/SISTEMA_PROTECAO_SESSOES.md)** - Como funciona a proteção
-- **[🎬 Sistema de Gravação](docs/RECORDING_SYSTEM_DOCUMENTATION.md)** - Configuração detalhada de gravação
-- **[🌐 Sistema RDP](docs/RDP_SYSTEM.md)** - Funcionamento das conexões RDP
-- **[📡 API e Integração](docs/api_upload_system.md)** - Sistema de API REST
-- **[👤 Permissões Individuais](docs/INDIVIDUAL_PERMISSIONS_README.md)** - Controle granular
-- **[🎭 Modo Demo](docs/MODO_DEMO.md)** - Testando sem banco de dados
+- **[🧭 Legado Técnico](docs/LEGADO_TECNICO_WATS.md)** - arquitetura, pontos críticos e plano de evolução.
+- **[🛠️ Manutenção Rápida](docs/MANUTENCAO_RAPIDA.md)** - checklist e troubleshooting do dia a dia.
 
-### Desenvolvimento e Build
+### Configuração
 
-- **[🔨 Build Multiplataforma](docs/BUILD_MULTIPLATFORM.md)** - Gerar executáveis Windows/Linux
-- **[💻 Desenvolvimento](docs/DEVELOPMENT.md)** - Ambiente de desenvolvimento
-- **[🏗️ Estrutura do Projeto](docs/PROJECT_STRUCTURE.md)** - Organização do código
-- **[⚡ Otimizações Aplicadas](docs/PERFORMANCE_OPTIMIZATIONS_APPLIED.md)** - Melhorias de performance
-
-### Administração
-
-- **[👥 Gerenciamento de Acesso](docs/ACCESS_MANAGEMENT_README.md)** - Usuários e grupos
-- **[📋 Manual do Painel de Permissões](docs/MANUAL_PAINEL_PERMISSOES.md)** - Guia do administrador
-- **[🎯 Melhores Práticas](docs/BEST_PRACTICES_ROADMAP.md)** - Recomendações de uso
+- **[⚙️ Referência de Configuração](docs/CONFIG_REFERENCE.md)** - descrição completa de cada item do `config.json`.
 
 ---
 

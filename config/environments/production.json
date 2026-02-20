@@ -31,14 +31,6 @@
     "auto_rotation": true,
     "retention_days": 90
   },
-  "api": {
-    "enabled": true,
-    "base_url": "${API_BASE_URL}",
-    "api_key": "${API_KEY}",
-    "timeout": 30,
-    "retry_attempts": 3,
-    "rate_limit": 100
-  },
   "ui": {
     "theme": "system",
     "auto_refresh_interval": 60,

@@ -28,10 +28,10 @@ def initialize_performance_optimizations(config: Settings):
     try:
         # 1. Inicializa Connection Pool
         connection_string = _build_connection_string(config)
-        pool_size = 5  # Valor padrão
-        max_overflow = 10  # Valor padrão
+        pool_size = max(1, int(getattr(config, "PERF_DB_POOL_SIZE", 5)))
+        max_overflow = max(0, int(getattr(config, "PERF_DB_MAX_OVERFLOW", 10)))
         
-        pool = get_connection_pool(
+        get_connection_pool(
             connection_string=connection_string,
             pool_size=pool_size,
             max_overflow=max_overflow
@@ -40,10 +40,13 @@ def initialize_performance_optimizations(config: Settings):
         logging.info(f"Connection Pool initialized (size={pool_size}, overflow={max_overflow})")
         
         # 2. Inicializa Cache
-        cache_ttl = 300  # 5 minutos default
-        cache = get_cache(default_ttl=cache_ttl)
+        cache_ttl = max(5, int(getattr(config, "PERF_CACHE_TTL_SECONDS", 300)))
+        cache_max_size = max(100, int(getattr(config, "PERF_CACHE_MAX_SIZE", 1000)))
+        get_cache(default_ttl=cache_ttl, max_size=cache_max_size)
         
-        logging.info(f"Cache system initialized (default TTL={cache_ttl}s)")
+        logging.info(
+            f"Cache system initialized (default TTL={cache_ttl}s, max_size={cache_max_size})"
+        )
         
         return True
         
@@ -59,13 +62,16 @@ def _build_connection_string(config: Settings) -> str:
     if db_type == "sqlserver":
         driver = "ODBC Driver 17 for SQL Server"  # Valor padrão
         server = config.DB_SERVER
+        db_port = getattr(config, "DB_PORT", None)
         database = config.DB_DATABASE
         uid = config.DB_UID
         pwd = config.DB_PWD
+
+        server_with_port = f"{server},{db_port}" if db_port else server
         
         conn_str = (
             f"DRIVER={{{driver}}};"
-            f"SERVER={server};"
+            f"SERVER={server_with_port};"
             f"DATABASE={database};"
             f"UID={uid};"
             f"PWD={pwd};"
@@ -153,18 +159,3 @@ def invalidate_group_caches(group_id: Optional[int] = None):
     logging.debug(f"Group, permission and connection caches invalidated (group_id={group_id})")
 
 
-# Exemplo de uso em repositories:
-"""
-class OptimizedConnectionRepository(ConnectionRepository):
-    
-    @cache_connections(ttl=60)
-    def select_all(self, username: str):
-        # Usa connection pool automaticamente via DatabaseManager atualizado
-        return super().select_all(username)
-    
-    def admin_create_connection(self, data):
-        result = super().admin_create_connection(data)
-        if result[0]:  # Se sucesso
-            invalidate_connection_caches()
-        return result
-"""

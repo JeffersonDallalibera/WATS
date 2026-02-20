@@ -300,7 +300,7 @@ class Settings:
         # Carrega diferentes grupos de configurações
         self._load_database_settings()
         self._load_recording_settings()
-        self._load_api_settings()
+        self._load_performance_settings()
         
         # Log das configurações carregadas
         self._log_loaded_settings()
@@ -400,36 +400,48 @@ class Settings:
         
         self.RECORDING_OUTPUT_DIR = recording_output_dir if recording_output_dir else default_recording_dir
 
-    def _load_api_settings(self):
-        """Carrega configurações da API de upload."""
-        # Configurações básicas
-        self.API_ENABLED = self._get_bool_config(["api", "enabled"], "API_ENABLED", False)
-        self.API_BASE_URL = self._get_config_value(["api", "base_url"], "API_BASE_URL", "")
-        self.API_TOKEN = self._get_config_value(["api", "api_token"], "API_TOKEN", "")
-        self.API_AUTO_UPLOAD = self._get_bool_config(["api", "auto_upload"], "API_AUTO_UPLOAD", False)
-        
-        # Configurações de timeout e retry
-        self.API_UPLOAD_TIMEOUT = self._get_int_config(["api", "upload_timeout"], "API_UPLOAD_TIMEOUT", 60)
-        self.API_MAX_RETRIES = self._get_int_config(["api", "max_retries"], "API_MAX_RETRIES", 3)
-        self.API_MAX_CONCURRENT_UPLOADS = self._get_int_config(
-            ["api", "max_concurrent_uploads"], "API_MAX_CONCURRENT_UPLOADS", 2
+    def _load_performance_settings(self):
+        """Carrega configurações de performance e tuning de runtime."""
+        self.PERF_MAX_CPU_USAGE_PERCENT = self._get_int_config(
+            ["performance", "max_cpu_usage_percent"], "PERF_MAX_CPU_USAGE_PERCENT", 80
         )
-        
-        # Configurações de limpeza
-        self.API_DELETE_AFTER_UPLOAD = self._get_bool_config(
-            ["api", "delete_after_upload"], "API_DELETE_AFTER_UPLOAD", False
+        self.PERF_MEMORY_LIMIT_MB = self._get_int_config(
+            ["performance", "memory_limit_mb"], "PERF_MEMORY_LIMIT_MB", 1024
         )
-        self.API_UPLOAD_OLDER_RECORDINGS = self._get_bool_config(
-            ["api", "upload_older_recordings"], "API_UPLOAD_OLDER_RECORDINGS", True
+        self.PERF_DISK_SPACE_CHECK_ENABLED = self._get_bool_config(
+            ["performance", "disk_space_check_enabled"], "PERF_DISK_SPACE_CHECK_ENABLED", True
         )
-        self.API_MAX_FILE_AGE_DAYS = self._get_int_config(
-            ["api", "max_file_age_days"], "API_MAX_FILE_AGE_DAYS", 30
+        self.PERF_MIN_FREE_SPACE_GB = self._get_float_config(
+            ["performance", "min_free_space_gb"], "PERF_MIN_FREE_SPACE_GB", 5.0
         )
+        self.PERF_BACKGROUND_CLEANUP_ENABLED = self._get_bool_config(
+            ["performance", "background_cleanup_enabled"],
+            "PERF_BACKGROUND_CLEANUP_ENABLED",
+            True,
+        )
+        self.PERF_OPTIMIZE_FOR_BATTERY = self._get_bool_config(
+            ["performance", "optimize_for_battery"], "PERF_OPTIMIZE_FOR_BATTERY", False
+        )
+
+        # Tuning efetivo para runtime (pool/cache)
+        self.PERF_DB_POOL_SIZE = self._get_int_config(
+            ["performance", "db_pool_size"], "PERF_DB_POOL_SIZE", 5
+        )
+        self.PERF_DB_MAX_OVERFLOW = self._get_int_config(
+            ["performance", "db_max_overflow"], "PERF_DB_MAX_OVERFLOW", 10
+        )
+        self.PERF_CACHE_TTL_SECONDS = self._get_int_config(
+            ["performance", "cache_ttl_seconds"], "PERF_CACHE_TTL_SECONDS", 300
+        )
+        self.PERF_CACHE_MAX_SIZE = self._get_int_config(
+            ["performance", "cache_max_size"], "PERF_CACHE_MAX_SIZE", 1000
+        )
+
+
 
     def _log_loaded_settings(self):
         """Registra as configurações carregadas (com senhas mascaradas)."""
         pwd_status = "***" if self.DB_PWD else "None"
-        api_token_status = "***" if self.API_TOKEN else "None"
         
         logging.debug(
             f"Settings lidas: DB_TYPE={self.DB_TYPE}, DB_SERVER={self.DB_SERVER}, "
@@ -444,8 +456,10 @@ class Settings:
             f"DURATION={self.RECORDING_MAX_DURATION_MINUTES}min, TOTAL_SIZE={self.RECORDING_MAX_TOTAL_SIZE_GB}GB"
         )
         logging.debug(
-            f"API settings: ENABLED={self.API_ENABLED}, AUTO_UPLOAD={self.API_AUTO_UPLOAD}, "
-            f"BASE_URL={self.API_BASE_URL}, TOKEN={api_token_status}"
+            "Performance settings: "
+            f"POOL_SIZE={self.PERF_DB_POOL_SIZE}, OVERFLOW={self.PERF_DB_MAX_OVERFLOW}, "
+            f"CACHE_TTL={self.PERF_CACHE_TTL_SECONDS}s, CACHE_MAX_SIZE={self.PERF_CACHE_MAX_SIZE}, "
+            f"CPU_LIMIT={self.PERF_MAX_CPU_USAGE_PERCENT}%, MEM_LIMIT={self.PERF_MEMORY_LIMIT_MB}MB"
         )
 
     def has_db_config(self) -> bool:
@@ -557,72 +571,7 @@ class Settings:
             logging.error(f"Error validating recording config: {e}")
             return False
 
-    def get_api_config(self) -> dict:
-        """Returns API configuration as a dictionary."""
-        return {
-            "enabled": self.API_ENABLED,
-            "base_url": self.API_BASE_URL,
-            "api_token": self.API_TOKEN,
-            "auto_upload": self.API_AUTO_UPLOAD,
-            "upload_timeout": self.API_UPLOAD_TIMEOUT,
-            "max_retries": self.API_MAX_RETRIES,
-            "max_concurrent_uploads": self.API_MAX_CONCURRENT_UPLOADS,
-            "delete_after_upload": self.API_DELETE_AFTER_UPLOAD,
-            "upload_older_recordings": self.API_UPLOAD_OLDER_RECORDINGS,
-            "max_file_age_days": self.API_MAX_FILE_AGE_DAYS,
-        }
 
-    def validate_api_config(self) -> bool:
-        """Validates API configuration settings."""
-        try:
-            # Check if API is enabled
-            if not self.API_ENABLED:
-                return True  # Valid to have API disabled
-
-            # Validate required fields
-            if not self.API_BASE_URL or not self.API_BASE_URL.strip():
-                logging.error("API_BASE_URL is required when API is enabled")
-                return False
-
-            if not self.API_TOKEN or not self.API_TOKEN.strip():
-                logging.error("API_TOKEN is required when API is enabled")
-                return False
-
-            # Validate URL format
-            if not self.API_BASE_URL.startswith(("http://", "https://")):
-                logging.error("API_BASE_URL must start with http:// or https://")
-                return False
-
-            # Validate numeric ranges
-            if self.API_UPLOAD_TIMEOUT < 10:
-                logging.warning(f"API_UPLOAD_TIMEOUT is very low: {self.API_UPLOAD_TIMEOUT}s")
-
-            if self.API_MAX_RETRIES < 0:
-                logging.error(f"Invalid API_MAX_RETRIES: {self.API_MAX_RETRIES} (must be >= 0)")
-                return False
-
-            if self.API_MAX_CONCURRENT_UPLOADS < 1:
-                logging.error(
-                    f"Invalid API_MAX_CONCURRENT_UPLOADS: {self.API_MAX_CONCURRENT_UPLOADS} (must be >= 1)"
-                )
-                return False
-            elif self.API_MAX_CONCURRENT_UPLOADS > 5:
-                logging.warning(
-                    f"High API_MAX_CONCURRENT_UPLOADS: {self.API_MAX_CONCURRENT_UPLOADS} may impact performance"
-                )
-
-            if self.API_MAX_FILE_AGE_DAYS < 1:
-                logging.error(
-                    f"Invalid API_MAX_FILE_AGE_DAYS: {self.API_MAX_FILE_AGE_DAYS} (must be >= 1)"
-                )
-                return False
-
-            logging.info("API configuration validation passed")
-            return True
-
-        except Exception as e:
-            logging.error(f"Error validating API config: {e}")
-            return False
 
 
 # --- Instância settings NÃO é criada aqui ---

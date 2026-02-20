@@ -20,7 +20,7 @@ class SimpleAccessManagerDialog(ctk.CTkToplevel):
         self.db = db
 
         self.title("Liberação de Acessos Individual")
-        self.geometry("900x600")
+        self.geometry("1000x950")
 
         # Dados em memória
         self.selected_user_id = None

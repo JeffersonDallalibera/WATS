@@ -24,17 +24,9 @@
       "inactivity_timeout_minutes": 5,
       "pause_on_minimized": true,
       "pause_on_covered": true,
-      "pause_on_inactive": true,
       "create_new_file_after_pause": true,
-      "create_new_file_after_inactivity": true,
       "debug_window_tracking": false,
-      "debug_activity_monitoring": false,
-      "window_reacquisition_attempts": 5,
-      "window_reacquisition_delay": 2.0,
-      "activity_detection_interval": 0.5,
-      "mouse_sensitivity": 5,
-      "save_activity_log": false,
-      "save_window_state_log": false
+      "debug_activity_monitoring": false
     },
     "compression": {
       "enabled": true,
@@ -47,18 +39,6 @@
       "remove_sensitive_fields": true,
       "log_protection_actions": true
     }
-  },
-  "api": {
-    "enabled": false,
-    "base_url": "",
-    "api_token": "",
-    "auto_upload": false,
-    "upload_timeout": 60,
-    "max_retries": 3,
-    "max_concurrent_uploads": 2,
-    "delete_after_upload": false,
-    "upload_older_recordings": true,
-    "max_file_age_days": 30
   },
   "application": {
     "log_level": "INFO",
@@ -81,39 +61,16 @@
     "default_width": 1920,
     "default_height": 1080
   },
-  "ui": {
-    "show_fps_counter": false,
-    "show_recording_status": true,
-    "notification_enabled": true,
-    "sound_notifications": false,
-    "toast_duration_seconds": 3,
-    "confirm_exit": true,
-    "remember_window_position": true,
-    "dark_mode": true
-  },
-  "security": {
-    "encrypt_recordings": false,
-    "encryption_key": "",
-    "require_password": false,
-    "session_timeout_minutes": 0,
-    "audit_log_enabled": true,
-    "restrict_file_access": false
-  },
   "performance": {
     "max_cpu_usage_percent": 80,
     "memory_limit_mb": 1024,
     "disk_space_check_enabled": true,
     "min_free_space_gb": 5,
     "background_cleanup_enabled": true,
-    "optimize_for_battery": false
-  },
-  "network": {
-    "proxy_enabled": false,
-    "proxy_host": "",
-    "proxy_port": "",
-    "proxy_username": "",
-    "proxy_password": "",
-    "connection_timeout": 30,
-    "retry_attempts": 3
+    "optimize_for_battery": false,
+    "db_pool_size": 5,
+    "db_max_overflow": 10,
+    "cache_ttl_seconds": 300,
+    "cache_max_size": 1000
   }
 }

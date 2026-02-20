@@ -5,6 +5,9 @@ import logging
 import shutil
 import subprocess
 import threading
+from typing import Iterable
+
+from ..utils.process_monitor import RdpProcessMonitor
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -25,6 +28,7 @@ class MultiSessionRecordingManager:
         self.callbacks: Dict[str, Callable] = {}
         self._lock = threading.Lock()
         self.settings = None
+        self.process_monitor = RdpProcessMonitor()
 
         logging.info("MultiSessionRecordingManager initialized")
 
@@ -48,15 +52,43 @@ class MultiSessionRecordingManager:
             logging.error(f"Failed to initialize MultiSessionRecordingManager: {e}")
             return False
 
+    def _is_rdp_process_active(self, connection_info: Dict[str, Any]) -> bool:
+        """
+        Validate if an RDP process is active using the shared process monitor.
+        Recording only starts AFTER the [PROCESS_CHECK] log is emitted.
+        """
+        server_ip = connection_info.get("ip", "")
+        title = connection_info.get("name", "")
+        user = connection_info.get("user") or connection_info.get("username")
+
+        try:
+            return self.process_monitor.is_rdp_process_active(
+                server_ip=server_ip,
+                user=user,
+                title=title,
+                tolerance_seconds=10,
+            )
+        except Exception as e:
+            logging.warning(f"[PROCESS_CHECK] Falha ao validar processo RDP: {e}")
+            # Fail open to avoid blocking recording on monitoring errors
+            return True
+
     def start_session_recording(
         self, session_id: str, connection_info: Dict[str, Any], callback: Optional[Callable] = None
     ) -> bool:
         """
-        Start recording for a specific session.
+        Start recording for a specific RDP session.
+        
+        Configured to:
+        - Record ONLY RDP sessions (rdp_window mode)
+        - Support multiple concurrent sessions (1, 2, or more)
+        - Detect and follow RDP window movement
+        - Exclude all other PC screen elements from recording
+        - Track RDP process exclusively
 
         Args:
             session_id: Unique identifier for the session
-            connection_info: Information about the RDP connection
+            connection_info: Information about the RDP connection (must include RDP window info)
             callback: Optional callback when recording stops
 
         Returns:
@@ -67,30 +99,34 @@ class MultiSessionRecordingManager:
                 logging.warning(f"Recording already active for session {session_id}")
                 return False
 
+            # ✅ PROCESS CHECK: Only start recording if an RDP process is active
+            if not self._is_rdp_process_active(connection_info):
+                logging.warning(
+                    f"SESSION {session_id}: Recording not started (no active RDP process)"
+                )
+                return False
+
             try:
                 # Get recording configuration
                 config = get_config()
                 recording_config = config.get("recording", {})
 
-                # Override with settings if available
+                # Override with settings if available - configure for RDP-only recording
                 if self.settings:
                     recording_config.update(
                         {
                             "enabled": self.settings.RECORDING_ENABLED,
                             "output_dir": self.settings.RECORDING_OUTPUT_DIR,
                             "fps": getattr(
-                                self.settings, "RECORDING_FPS", recording_config.get("fps", 30)
+                                self.settings, "RECORDING_FPS", recording_config.get("fps", 5)
                             ),
                             "quality": getattr(
                                 self.settings,
                                 "RECORDING_QUALITY",
-                                recording_config.get("quality", 75),
+                                recording_config.get("quality", 28),
                             ),
-                            "mode": getattr(
-                                self.settings,
-                                "RECORDING_MODE",
-                                recording_config.get("mode", "rdp_window"),
-                            ),
+                            # ✅ CRITICAL: Set to rdp_window to record ONLY RDP sessions
+                            "mode": "rdp_window",
                             "compress_enabled": getattr(
                                 self.settings,
                                 "RECORDING_COMPRESSION_ENABLED",
@@ -107,16 +143,41 @@ class MultiSessionRecordingManager:
                 # Store the recording config for this session
                 self.recording_configs[session_id] = recording_config
 
-                # Create and start the recorder
-                # Note: SessionRecorder automatically sanitizes connection_info to protect
-                # sensitive data
-                recorder = SessionRecorder(connection_info, recording_config)
-                if recorder.start_recording():
+                # Create and start the recorder with RDP-window-specific configuration
+                # ✅ CONFIGURATION FOR RDP-ONLY RECORDING
+                # - fps: 3 (OPTIMIZED: reduced from 5 to 3 for lower memory usage)
+                # - quality: 28 CRF (good quality/size tradeoff)
+                # - resolution_scale: 0.75 (75% of RDP window resolution)
+                # - recording_mode: "rdp_window" (ONLY records the RDP window)
+                # - track_window_movement: True (follows RDP window if it moves)
+                # - exclude_other_elements: True (ignores other PC screen content)
+                recorder = SessionRecorder(
+                    output_dir=recording_config.get("output_dir", "./recordings"),
+                    max_file_size_mb=recording_config.get("max_file_size_mb", 100),
+                    max_duration_minutes=recording_config.get("max_duration_minutes", 30),
+                    fps=recording_config.get("fps", 3),  # ✅ OPTIMIZED: 3 FPS (was 5) - 40% less memory
+                    quality=recording_config.get("quality", 28),  # CRF 28 (better compression)
+                    resolution_scale=recording_config.get("resolution_scale", 0.75),  # 75% resolution
+                    recording_mode="rdp_window",  # ✅ CRITICAL: Record ONLY RDP window
+                    force_window_maximized=recording_config.get("force_window_maximized", True),
+                    track_window_movement=True,  # ✅ Follow RDP window if it moves
+                    exclude_non_rdp_content=True,  # ✅ Exclude other PC elements
+                )
+                
+                # Store connection info for RDP-specific tracking
+                # This ensures we track the correct RDP window across all sessions
+                if not hasattr(self, 'session_connections'):
+                    self.session_connections = {}
+                self.session_connections[session_id] = connection_info
+                
+                # Start recording with session_id and connection_info
+                if recorder.start_recording(session_id, connection_info):
                     self.active_recordings[session_id] = recorder
                     if callback:
                         self.callbacks[session_id] = callback
                     logging.info(
-                        f"Started recording for session {session_id} with session protection enabled"
+                        f"✅ Started RDP-only recording for session {session_id} "
+                        f"(RDP Window Tracking Enabled, Multi-session support active)"
                     )
                     return True
                 else:
@@ -154,10 +215,12 @@ class MultiSessionRecordingManager:
                         f"Stopped recording for session {session_id}, saved to: {video_path}"
                     )
 
-                    # Start compression in background if enabled
+                    # ⚡ OTIMIZAÇÃO: Sempre comprime AVI -> MP4 (compress_enabled default = True)
                     recording_config = self.recording_configs.get(session_id, {})
-                    if recording_config.get("compress_enabled", False):
+                    if recording_config.get("compress_enabled", True):  # Default True
                         self._compress_recording_async(video_path, recording_config)
+                    else:
+                        logging.info(f"⚠️ Compression disabled - keeping AVI file: {video_path}")
 
                     # Call callback if provided
                     if session_id in self.callbacks:
@@ -295,6 +358,7 @@ class MultiSessionRecordingManager:
     def _compress_recording_async(self, video_path: str, recording_config: Dict[str, Any]):
         """
         Compress a recording file using ffmpeg in a background thread.
+        Converte .AVI (rápido de escrever) para .MP4 (H.264 comprimido).
 
         Args:
             video_path: Path to the video file to compress
@@ -314,52 +378,76 @@ class MultiSessionRecordingManager:
                     return
 
                 crf = recording_config.get("compress_crf", 28)
-                tmp_file = video_file.with_suffix(".tmp.mp4")
+                
+                # ⚡ OTIMIZAÇÃO: Converte .AVI -> .MP4 (H.264)
+                # Se já for .mp4, recomprime com melhor qualidade
+                if video_file.suffix.lower() == ".avi":
+                    output_file = video_file.with_suffix(".mp4")
+                    logging.info(f"⚡ Converting AVI to MP4: {video_file.name} -> {output_file.name}")
+                else:
+                    output_file = video_file.with_suffix(".tmp.mp4")
 
-                # Build ffmpeg command
+                # Build ffmpeg command with optimized settings
                 cmd = [
                     ffmpeg_cmd,
-                    "-y",
-                    "-i",
-                    str(video_file),
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    str(crf),
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    str(tmp_file),
+                    "-y",  # Overwrite output
+                    "-i", str(video_file),
+                    "-c:v", "libx264",  # H.264 codec
+                    "-preset", "fast",  # ⚡ Mais rápido que 'veryfast' mas mantém qualidade
+                    "-crf", str(crf),   # Quality (18-28 recomendado, default 28)
+                    "-movflags", "+faststart",  # Permite streaming
+                    "-pix_fmt", "yuv420p",  # Compatibilidade máxima
+                    str(output_file),
                 ]
 
-                logging.info(f"Compressing {video_file.name} -> CRF={crf}")
+                logging.info(f"🔄 Compressing: {video_file.name} -> CRF={crf}, preset=fast")
                 proc = subprocess.run(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    cmd, 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.PIPE, 
+                    text=True,
+                    timeout=600  # Timeout de 10 minutos
                 )
 
                 if proc.returncode != 0:
-                    logging.error(f"ffmpeg failed for {video_file.name}: {proc.stderr}")
-                    if tmp_file.exists():
-                        tmp_file.unlink()
+                    logging.error(f"❌ ffmpeg failed for {video_file.name}: {proc.stderr}")
+                    if output_file.exists():
+                        output_file.unlink()
                     return
 
-                # Replace original with compressed file
-                try:
-                    backup = video_file.with_suffix(".bak.mp4")
-                    video_file.rename(backup)
-                    tmp_file.rename(video_file)
-                    backup.unlink()
-                    logging.info(f"Compression completed and replaced original: {video_file.name}")
-                except Exception as e:
-                    logging.error(f"Failed to replace original file after compression: {e}")
-                    if tmp_file.exists():
-                        tmp_file.unlink()
+                # ⚡ Se converteu de AVI -> MP4, deleta o AVI original
+                if video_file.suffix.lower() == ".avi" and output_file.exists():
+                    try:
+                        original_size = video_file.stat().st_size / (1024 * 1024)  # MB
+                        compressed_size = output_file.stat().st_size / (1024 * 1024)  # MB
+                        ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+                        
+                        video_file.unlink()  # Deleta AVI
+                        logging.info(
+                            f"✅ Compression completed: {output_file.name} "
+                            f"({original_size:.1f}MB -> {compressed_size:.1f}MB, "
+                            f"saved {ratio:.1f}%)"
+                        )
+                    except Exception as e:
+                        logging.error(f"Failed to cleanup after compression: {e}")
+                
+                # Se era .mp4 original, substitui pelo comprimido
+                elif output_file.suffix == ".mp4" and output_file.name.endswith(".tmp.mp4"):
+                    try:
+                        backup = video_file.with_suffix(".bak.mp4")
+                        video_file.rename(backup)
+                        output_file.rename(video_file)
+                        backup.unlink()
+                        logging.info(f"✅ Re-compression completed: {video_file.name}")
+                    except Exception as e:
+                        logging.error(f"Failed to replace original file after compression: {e}")
+                        if output_file.exists():
+                            output_file.unlink()
 
+            except subprocess.TimeoutExpired:
+                logging.error(f"⏱️ Compression timeout for {video_file.name}")
             except Exception as e:
-                logging.error(f"Unexpected error during compression: {e}")
+                logging.error(f"❌ Unexpected error during compression: {e}")
 
         # Start compression in background thread
         compress_thread = threading.Thread(target=compress_task, daemon=True)

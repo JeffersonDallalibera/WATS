@@ -24,7 +24,7 @@ class ConnectionRepository(BaseRepository):
 
         self.individual_perm_repo = IndividualPermissionRepository(db_manager)
 
-    @cache_connections(ttl=60)
+    @cache_connections(ttl=10)
     def select_all(self, username: str) -> List[Any]:
         user_id, is_admin = self.user_repo.get_user_role(username)
 
@@ -94,7 +94,7 @@ class ConnectionRepository(BaseRepository):
             raise DatabaseQueryError(f"Erro ao buscar dados: {e}")
         return []
 
-    @cache_connections(ttl=60)
+    @cache_connections(ttl=10)
     def admin_get_all_connections(self) -> List[Tuple]:
         """
         Retorna todas as conexões ATIVAS (exclui grupo 33 - Inativo).
